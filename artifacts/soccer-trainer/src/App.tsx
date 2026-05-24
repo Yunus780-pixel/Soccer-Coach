@@ -8,6 +8,7 @@ import Home from "@/pages/home";
 import Train from "@/pages/train";
 import Leaderboard from "@/pages/leaderboard";
 import Stats from "@/pages/stats";
+import Sessions from "@/pages/sessions";
 
 const queryClient = new QueryClient();
 
@@ -19,6 +20,7 @@ function Router() {
         <Route path="/train/:drillId" component={Train} />
         <Route path="/leaderboard" component={Leaderboard} />
         <Route path="/stats" component={Stats} />
+        <Route path="/sessions" component={Sessions} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

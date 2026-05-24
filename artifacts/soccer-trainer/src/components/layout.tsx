@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Trophy, LayoutDashboard } from "lucide-react";
+import { Activity, Trophy, LayoutDashboard, History } from "lucide-react";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -10,6 +10,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const navItems = [
     { href: "/", label: "Training", icon: Activity },
+    { href: "/sessions", label: "Sessions", icon: History },
     { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
     { href: "/stats", label: "Stats", icon: LayoutDashboard },
   ];
