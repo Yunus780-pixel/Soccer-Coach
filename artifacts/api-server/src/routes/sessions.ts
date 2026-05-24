@@ -27,8 +27,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
   const sessions = await db
     .select()
     .from(sessionsTable)
-    .orderBy(desc(sessionsTable.startedAt))
-    .limit(50);
+    .orderBy(desc(sessionsTable.startedAt));
   res.json(ListSessionsResponse.parse(sessions.map(serializeSession)));
 });
 
