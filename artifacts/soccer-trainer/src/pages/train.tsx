@@ -160,16 +160,30 @@ export default function Train() {
 
   return (
     <div className="w-full px-4 py-2">
+      {/* Session name banner */}
+      <div className="max-w-7xl mx-auto mb-2 bg-primary rounded-xl px-5 py-3 flex items-center justify-between shadow-md">
+        <div className="flex items-center gap-3">
+          <Activity className="w-6 h-6 text-white shrink-0" />
+          <div>
+            <div className="text-white/70 uppercase text-[10px] font-bold tracking-widest leading-none mb-0.5">Now Training</div>
+            <h1 className="text-white text-xl font-bold uppercase tracking-tight leading-tight">
+              {drill?.name || "Loading..."}
+            </h1>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="bg-white/20 text-white text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-md">
+            {drill?.category}
+          </span>
+          <span className="bg-white/20 text-white text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-md">
+            {drill?.difficulty}
+          </span>
+        </div>
+      </div>
+
       {/* Top bar */}
       <div className="flex justify-between items-center mb-2 max-w-7xl mx-auto">
-        <div>
-          <h1 className="text-2xl font-bold uppercase tracking-tight text-primary leading-tight">
-            {drill?.name || "Loading..."}
-          </h1>
-          <p className="text-muted-foreground uppercase text-xs font-semibold tracking-wider">
-            {drill?.category} • {drill?.difficulty}
-          </p>
-        </div>
+        <div />
         <div className="flex items-center gap-3">
           <div className="text-right">
             <div className="text-xs font-bold uppercase text-muted-foreground">Time</div>
