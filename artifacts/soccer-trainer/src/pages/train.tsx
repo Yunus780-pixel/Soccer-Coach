@@ -136,20 +136,20 @@ export default function Train() {
   if (!match) return null;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 h-[calc(100vh-80px)] flex flex-col">
-      <div className="flex justify-between items-center mb-6">
+    <div className="max-w-7xl mx-auto px-4 py-2 h-[calc(100vh-64px)] flex flex-col gap-2">
+      <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold uppercase tracking-tight text-primary">
+          <h1 className="text-2xl font-bold uppercase tracking-tight text-primary leading-tight">
             {drill?.name || "Loading..."}
           </h1>
-          <p className="text-muted-foreground uppercase text-sm font-semibold tracking-wider">
+          <p className="text-muted-foreground uppercase text-xs font-semibold tracking-wider">
             {drill?.category} • {drill?.difficulty}
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <div className="text-right">
-            <div className="text-sm font-bold uppercase text-muted-foreground">Time Remaining</div>
-            <div className={`text-4xl font-mono font-bold ${timeLeft <= 5 ? 'text-destructive' : 'text-primary'}`}>
+            <div className="text-xs font-bold uppercase text-muted-foreground">Time</div>
+            <div className={`text-3xl font-mono font-bold ${timeLeft <= 5 ? 'text-destructive' : 'text-primary'}`}>
               00:{timeLeft.toString().padStart(2, '0')}
             </div>
           </div>
@@ -175,10 +175,10 @@ export default function Train() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-grow min-h-0">
-        <div className="lg:col-span-3 flex flex-col gap-4 min-h-0">
-          {/* Main Camera View */}
-          <div className="relative flex-grow bg-black rounded-xl overflow-hidden shadow-xl border-4 border-border flex flex-col">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 flex-grow min-h-0">
+        <div className="lg:col-span-3 flex flex-col gap-3 min-h-0">
+          {/* Main Camera View — takes all available height */}
+          <div className="relative flex-grow bg-black rounded-xl overflow-hidden shadow-xl border-4 border-border flex flex-col min-h-0">
             <PoseCamera isActive={isActive} onPoseUpdate={handlePoseUpdate} />
             
             {/* Overlay UI elements */}
@@ -221,21 +221,17 @@ export default function Train() {
           </div>
 
           {/* Spectator Strip */}
-          <div className="bg-muted/30 border rounded-xl p-3 flex items-center gap-4 overflow-x-auto">
-            <div className="flex items-center text-sm font-bold uppercase tracking-wider text-muted-foreground shrink-0 mr-2">
-              <Users className="w-4 h-4 mr-2" /> Live Spectators
+          <div className="bg-muted/30 border rounded-lg px-3 py-1.5 flex items-center gap-3 overflow-x-auto shrink-0">
+            <div className="flex items-center text-xs font-bold uppercase tracking-wider text-muted-foreground shrink-0">
+              <Users className="w-3 h-3 mr-1" /> Watching
             </div>
             {SPECTATORS.map(spec => (
-              <div key={spec.id} className="flex items-center bg-white border shadow-sm rounded-full pr-4 py-1 shrink-0">
-                <Avatar className="w-8 h-8 border-2 border-primary/20 mr-2">
-                  <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">{spec.initials}</AvatarFallback>
+              <div key={spec.id} className="flex items-center bg-white border shadow-sm rounded-full px-2 py-0.5 shrink-0 gap-1.5">
+                <Avatar className="w-6 h-6 border border-primary/20">
+                  <AvatarFallback className="bg-primary/10 text-primary text-[10px] font-bold">{spec.initials}</AvatarFallback>
                 </Avatar>
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold whitespace-nowrap">{spec.name}</span>
-                  <span className="text-[10px] text-primary flex items-center uppercase font-bold tracking-wider">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1"></span> Watching
-                  </span>
-                </div>
+                <span className="text-xs font-bold whitespace-nowrap">{spec.name}</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
               </div>
             ))}
           </div>
