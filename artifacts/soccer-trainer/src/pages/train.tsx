@@ -85,6 +85,10 @@ export default function Train() {
     }
   }, [isActive]);
 
+  const handleRepDetected = useCallback(() => {
+    setRepCount(c => c + 1);
+  }, []);
+
   const handleManualRep = () => {
     if (isActive) {
       setRepCount(prev => prev + 1);
@@ -197,7 +201,7 @@ export default function Train() {
 
       {/* FULL-WIDTH Camera */}
       <div className="relative bg-black rounded-xl overflow-hidden shadow-xl border-4 border-border max-w-7xl mx-auto" style={{ height: "75vh" }}>
-        <PoseCamera isActive={isActive} onPoseUpdate={handlePoseUpdate} />
+        <PoseCamera isActive={isActive} onPoseUpdate={handlePoseUpdate} onRepDetected={handleRepDetected} />
 
         {/* Overlays */}
         <div className="absolute top-4 left-4 right-4 flex justify-between pointer-events-none z-20">
