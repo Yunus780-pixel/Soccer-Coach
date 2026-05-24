@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Trophy, Activity, ArrowRight, Clock, Target, PlayCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const CATEGORIES = ["All", "corner", "dribbling", "juggling", "shooting", "passing"];
+const CATEGORIES = ["All", "corver", "dribbling", "juggling", "shooting", "passing"];
 
 export default function Home() {
   const [, setLocation] = useLocation();
