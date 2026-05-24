@@ -3,13 +3,22 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Soccer Leg Trainer API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: drills
+    description: Training drills
+  - name: sessions
+    description: Training sessions
+  - name: feedback
+    description: AI performance feedback
+  - name: leaderboard
+    description: Leaderboard and community stats
+
 paths:
   /healthz:
     get:
@@ -24,6 +33,173 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /drills:
+    get:
+      operationId: listDrills
+      tags: [drills]
+      summary: List all drills
+      description: Returns all available leg training drills including corner exercises
+      responses:
+        "200":
+          description: List of drills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Drill"
+
+  /drills/{id}:
+    get:
+      operationId: getDrill
+      tags: [drills]
+      summary: Get a drill by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Drill detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Drill"
+        "404":
+          description: Not found
+
+  /sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List recent training sessions
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: Start a new training session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /sessions/{id}:
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Get session details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateSession
+      tags: [sessions]
+      summary: Update session (complete it, update score, etc.)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionUpdate"
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+
+  /sessions/{id}/feedback:
+    post:
+      operationId: submitFeedback
+      tags: [feedback]
+      summary: Submit AI feedback for a session attempt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackInput"
+      responses:
+        "201":
+          description: Feedback saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackResult"
+
+  /leaderboard:
+    get:
+      operationId: getLeaderboard
+      tags: [leaderboard]
+      summary: Get top performers leaderboard
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LeaderboardEntry"
+
+  /stats/summary:
+    get:
+      operationId: getStatsSummary
+      tags: [sessions]
+      summary: Get overall training stats summary
+      responses:
+        "200":
+          description: Training summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsSummary"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +210,157 @@ components:
       required:
         - status
 
+    Drill:
+      type: object
+      required: [id, name, category, difficulty, description, keyPoints, targetLegMotion, durationSeconds]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+          description: "e.g. corner, dribbling, passing, shooting, juggling"
+        difficulty:
+          type: string
+          description: "beginner, intermediate, advanced"
+        description:
+          type: string
+        keyPoints:
+          type: array
+          items:
+            type: string
+          description: Coaching tips for correct form
+        targetLegMotion:
+          type: string
+          description: Description of the ideal leg motion pattern for AI evaluation
+        durationSeconds:
+          type: integer
+        thumbnailEmoji:
+          type: ["string", "null"]
+
+    Session:
+      type: object
+      required: [id, drillId, drillName, playerName, startedAt, status, score]
+      properties:
+        id:
+          type: integer
+        drillId:
+          type: integer
+        drillName:
+          type: string
+        playerName:
+          type: string
+        startedAt:
+          type: string
+        completedAt:
+          type: ["string", "null"]
+        status:
+          type: string
+          description: "active, completed"
+        score:
+          type: ["integer", "null"]
+          description: "0-100 AI score"
+        feedbackSummary:
+          type: ["string", "null"]
+        repCount:
+          type: ["integer", "null"]
+
+    SessionInput:
+      type: object
+      required: [drillId, playerName]
+      properties:
+        drillId:
+          type: integer
+        playerName:
+          type: string
+
+    SessionUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+        score:
+          type: ["integer", "null"]
+        feedbackSummary:
+          type: ["string", "null"]
+        repCount:
+          type: ["integer", "null"]
+
+    FeedbackInput:
+      type: object
+      required: [poseData, drillId]
+      properties:
+        drillId:
+          type: integer
+        poseData:
+          type: object
+          description: Keypoint data from pose detection
+          properties:
+            kneeAngle:
+              type: ["number", "null"]
+            hipAngle:
+              type: ["number", "null"]
+            ankleFlexion:
+              type: ["number", "null"]
+            legExtension:
+              type: ["number", "null"]
+            balanceScore:
+              type: ["number", "null"]
+        repCount:
+          type: ["integer", "null"]
+
+    FeedbackResult:
+      type: object
+      required: [score, verdict, tips, poseQuality]
+      properties:
+        score:
+          type: integer
+          description: "0-100 performance score"
+        verdict:
+          type: string
+          description: "excellent, good, needs_work, poor"
+        tips:
+          type: array
+          items:
+            type: string
+          description: Actionable coaching tips from AI
+        poseQuality:
+          type: object
+          properties:
+            kneeAlignment:
+              type: string
+            hipStability:
+              type: string
+            footContact:
+              type: string
+
+    LeaderboardEntry:
+      type: object
+      required: [rank, playerName, totalSessions, avgScore, bestDrill]
+      properties:
+        rank:
+          type: integer
+        playerName:
+          type: string
+        totalSessions:
+          type: integer
+        avgScore:
+          type: integer
+        bestDrill:
+          type: string
+
+    StatsSummary:
+      type: object
+      required: [totalSessions, avgScore, totalPlayers, topDrill, completedToday]
+      properties:
+        totalSessions:
+          type: integer
+        avgScore:
+          type: integer
+        totalPlayers:
+          type: integer
+        topDrill:
+          type: string
+        completedToday:
+          type: integer
