@@ -187,7 +187,7 @@ router.get("/stats/summary", async (req, res): Promise<void> => {
     totalSessions: Number(totals?.totalSessions ?? 0),
     avgScore: Math.round(Number(totals?.avgScore ?? 0)),
     totalPlayers: Number(playerCountRow?.totalPlayers ?? 0),
-    topDrill: topDrillRow?.drillName ?? "Corner Kick Precision",
+    topDrill: topDrillRow?.drillName ?? "Corver Kick Precision",
     completedToday: Number(todayRow?.completedToday ?? 0),
   };
 
