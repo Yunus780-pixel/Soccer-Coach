@@ -2,14 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import * as tf from "@tensorflow/tfjs";
 import * as poseDetection from "@tensorflow-models/pose-detection";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
 
 interface PoseCameraProps {
   isActive: boolean;
   onPoseUpdate: (metrics: any) => void;
   onRepDetected?: () => void;
+}
+
+async function initBackend() {
+  for (const backend of ["webgl", "cpu"] as const) {
+    try {
+      const ok = await tf.setBackend(backend);
+      if (ok) { await tf.ready(); return; }
+    } catch (_) { /* try next */ }
+  }
+  throw new Error("No TF backend available");
 }
 
 export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: PoseCameraProps) {
@@ -18,54 +27,33 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
   const [poseDetector, setPoseDetector] = useState<poseDetection.PoseDetector | null>(null);
   const [ballDetector, setBallDetector] = useState<cocoSsd.ObjectDetection | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isModelLoading, setIsModelLoading] = useState(true);
+  const [loadingMsg, setLoadingMsg] = useState<string>("Starting camera...");
   const animationFrameId = useRef<number | null>(null);
 
-  // Ball tracking refs (no re-render needed)
   const lastBallPos = useRef<{ x: number; y: number } | null>(null);
   const lastRepTime = useRef<number>(0);
   const onRepDetectedRef = useRef(onRepDetected);
   onRepDetectedRef.current = onRepDetected;
 
-  // Load models
-  useEffect(() => {
-    async function loadModels() {
-      try {
-        setIsModelLoading(true);
-        await tf.ready();
-
-        const [newPoseDetector, newBallDetector] = await Promise.all([
-          poseDetection.createDetector(
-            poseDetection.SupportedModels.MoveNet,
-            { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
-          ),
-          cocoSsd.load({ base: "lite_mobilenet_v2" }),
-        ]);
-
-        setPoseDetector(newPoseDetector);
-        setBallDetector(newBallDetector);
-      } catch (err) {
-        console.error("Failed to load models", err);
-        setError("Failed to load AI model. Please refresh.");
-      } finally {
-        setIsModelLoading(false);
-      }
-    }
-    loadModels();
-  }, []);
-
-  // Setup camera
+  // Camera setup — runs immediately, independent of AI models
   useEffect(() => {
     async function setupCamera() {
       if (!videoRef.current) return;
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" }
+          video: { facingMode: "user", width: 1280, height: 720 },
         });
         videoRef.current.srcObject = stream;
-      } catch (err) {
-        console.error("Camera access denied", err);
-        setError("Camera access is required for real-time analysis. Please allow camera permissions.");
+        setLoadingMsg("Loading AI models...");
+      } catch (_) {
+        try {
+          // fallback: any camera, any resolution
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          videoRef.current!.srcObject = stream;
+          setLoadingMsg("Loading AI models...");
+        } catch (err) {
+          setError("Camera access is required. Please allow camera permissions and reload.");
+        }
       }
     }
     setupCamera();
@@ -76,9 +64,43 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
     };
   }, []);
 
+  // Load AI models — independent of camera, errors are non-fatal per model
+  useEffect(() => {
+    async function loadModels() {
+      try {
+        await initBackend();
+      } catch (err) {
+        setError("Failed to initialise AI engine. Please use Chrome or Firefox and reload.");
+        return;
+      }
+
+      // Load pose detector
+      try {
+        const detector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.MoveNet,
+          { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+        );
+        setPoseDetector(detector);
+      } catch (err) {
+        console.error("Pose model failed:", err);
+      }
+
+      // Load ball detector separately — failure is non-fatal
+      try {
+        const objDetector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+        setBallDetector(objDetector);
+      } catch (err) {
+        console.error("Ball detection model failed (non-fatal):", err);
+      }
+
+      setLoadingMsg("");
+    }
+    loadModels();
+  }, []);
+
   // Detection loop
   useEffect(() => {
-    if (!isActive || !poseDetector || !ballDetector || !videoRef.current || !canvasRef.current) {
+    if (!isActive || !videoRef.current || !canvasRef.current) {
       if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
       return;
     }
@@ -92,72 +114,66 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
         animationFrameId.current = requestAnimationFrame(detect);
         return;
       }
-
       if (canvas.width !== video.videoWidth) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
       }
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      try {
-        // Run both models in parallel
-        const [poses, objects] = await Promise.all([
-          poseDetector!.estimatePoses(video),
-          ballDetector!.detect(video),
-        ]);
+      // Pose estimation
+      if (poseDetector) {
+        try {
+          const poses = await poseDetector.estimatePoses(video);
+          if (poses.length > 0) extractMetrics(poses[0]);
+        } catch (_) {}
+      }
 
-        // Pose metrics
-        if (poses.length > 0) {
-          extractMetrics(poses[0]);
-        }
+      // Ball detection
+      if (ballDetector) {
+        try {
+          const objects = await ballDetector.detect(video);
+          const ball = objects
+            .filter(o => o.class === "sports ball" && o.score > 0.3)
+            .sort((a, b) => b.score - a.score)[0];
 
-        // Ball detection
-        const ball = objects.find(o => o.class === "sports ball" && o.score > 0.4);
+          if (ball) {
+            const cx = ball.bbox[0] + ball.bbox[2] / 2;
+            const cy = ball.bbox[1] + ball.bbox[3] / 2;
+            const r = Math.max(ball.bbox[2], ball.bbox[3]) / 2;
 
-        if (ball) {
-          const cx = ball.bbox[0] + ball.bbox[2] / 2;
-          const cy = ball.bbox[1] + ball.bbox[3] / 2;
-          const r = Math.max(ball.bbox[2], ball.bbox[3]) / 2;
+            // Draw ball indicator
+            ctx.beginPath();
+            ctx.arc(cx, cy, r + 6, 0, 2 * Math.PI);
+            ctx.strokeStyle = "#16a34a";
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = "#16a34a";
+            ctx.fill();
 
-          // Draw ball highlight on canvas
-          ctx.beginPath();
-          ctx.arc(cx, cy, r + 6, 0, 2 * Math.PI);
-          ctx.strokeStyle = "#16a34a";
-          ctx.lineWidth = 3;
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
-          ctx.fillStyle = "#16a34a";
-          ctx.fill();
-
-          // Rep counting: detect a kick by measuring ball displacement
-          const now = Date.now();
-          if (lastBallPos.current) {
-            const dx = cx - lastBallPos.current.x;
-            const dy = cy - lastBallPos.current.y;
-            const speed = Math.sqrt(dx * dx + dy * dy);
-
-            // If ball moved > 40px in one frame and debounce passed → rep
-            if (speed > 40 && now - lastRepTime.current > 1500) {
-              lastRepTime.current = now;
-              onRepDetectedRef.current?.();
-
-              // Flash ring on kick
-              ctx.beginPath();
-              ctx.arc(cx, cy, r + 18, 0, 2 * Math.PI);
-              ctx.strokeStyle = "rgba(22, 163, 74, 0.7)";
-              ctx.lineWidth = 5;
-              ctx.stroke();
+            // Rep counting — detect kick via fast ball movement
+            const now = Date.now();
+            if (lastBallPos.current) {
+              const dx = cx - lastBallPos.current.x;
+              const dy = cy - lastBallPos.current.y;
+              const speed = Math.sqrt(dx * dx + dy * dy);
+              if (speed > 30 && now - lastRepTime.current > 1200) {
+                lastRepTime.current = now;
+                onRepDetectedRef.current?.();
+                // Flash ring on kick
+                ctx.beginPath();
+                ctx.arc(cx, cy, r + 20, 0, 2 * Math.PI);
+                ctx.strokeStyle = "rgba(22, 163, 74, 0.8)";
+                ctx.lineWidth = 5;
+                ctx.stroke();
+              }
             }
+            lastBallPos.current = { x: cx, y: cy };
+          } else {
+            lastBallPos.current = null;
           }
-
-          lastBallPos.current = { x: cx, y: cy };
-        } else {
-          lastBallPos.current = null;
-        }
-      } catch (e) {
-        console.error(e);
+        } catch (_) {}
       }
 
       animationFrameId.current = requestAnimationFrame(detect);
@@ -181,8 +197,9 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
       const dx2 = ankle.x - knee.x;
       const dy2 = ankle.y - knee.y;
       const angle = Math.atan2(dy2, dx2) - Math.atan2(dy1, dx1);
-      kneeAngle = Math.abs((angle * 180) / Math.PI);
-      if (kneeAngle > 180) kneeAngle = 360 - kneeAngle;
+      let kneeAngleDeg = Math.abs((angle * 180) / Math.PI);
+      if (kneeAngleDeg > 180) kneeAngleDeg = 360 - kneeAngleDeg;
+      kneeAngle = kneeAngleDeg;
     }
     onPoseUpdate({ kneeAngle, hipAngle: 90 });
   };
@@ -192,7 +209,7 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
       <div className="absolute inset-0 flex items-center justify-center bg-muted p-4">
         <Alert variant="destructive" className="max-w-md">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
+          <AlertTitle>Camera Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       </div>
@@ -200,11 +217,11 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
   }
 
   return (
-    <div className="relative w-full h-full bg-muted overflow-hidden flex items-center justify-center">
-      {isModelLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-background/80 backdrop-blur-sm">
-          <Skeleton className="w-32 h-32 rounded-full mb-4 opacity-50" />
-          <p className="text-primary uppercase tracking-widest font-bold animate-pulse">Loading AI Models...</p>
+    <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center">
+      {loadingMsg && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-black/70 backdrop-blur-sm gap-4">
+          <Loader2 className="w-12 h-12 text-primary animate-spin" />
+          <p className="text-primary uppercase tracking-widest font-bold text-sm">{loadingMsg}</p>
         </div>
       )}
       <video
