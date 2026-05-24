@@ -114,7 +114,26 @@ export default function Train() {
       {
         onSuccess: (result) => {
           setFeedbackResult(result);
-          
+
+          // Read feedback aloud using Web Speech API
+          if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+            const verdictText = result.verdict === "excellent"
+              ? "Excellent work!"
+              : result.verdict === "good"
+              ? "Good job!"
+              : result.verdict === "needs_work"
+              ? "Keep working on it."
+              : "Keep practising.";
+            const intro = `AI analysis complete. Score: ${result.score} out of 100. ${verdictText}`;
+            const tips = (result.tips ?? []).slice(0, 2).join(". ");
+            const full = tips ? `${intro} Here are your coaching tips: ${tips}` : intro;
+            const utterance = new SpeechSynthesisUtterance(full);
+            utterance.rate = 0.95;
+            utterance.pitch = 1;
+            window.speechSynthesis.speak(utterance);
+          }
+
           // Also update session as completed
           updateSession.mutate({
             id: parseInt(sessionId, 10),

@@ -19,8 +19,13 @@ export default function Home() {
   const createSession = useCreateSession();
 
   const [filter, setFilter] = useState("All");
-  const [playerName, setPlayerName] = useState("");
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem("footwork_player_name") ?? "");
   const [startingDrillId, setStartingDrillId] = useState<number | null>(null);
+
+  const handleNameChange = (name: string) => {
+    setPlayerName(name);
+    localStorage.setItem("footwork_player_name", name);
+  };
 
   const filteredDrills = drills?.filter(d => filter === "All" || d.category === filter) || [];
 
@@ -71,7 +76,7 @@ export default function Home() {
             id="player-name"
             placeholder="Enter your name..." 
             value={playerName} 
-            onChange={e => setPlayerName(e.target.value)}
+            onChange={e => handleNameChange(e.target.value)}
             className="max-w-xs uppercase font-medium placeholder:normal-case"
             data-testid="input-player-name"
           />
