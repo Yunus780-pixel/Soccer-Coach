@@ -27,7 +27,8 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
   const [poseDetector, setPoseDetector] = useState<poseDetection.PoseDetector | null>(null);
   const [ballDetector, setBallDetector] = useState<cocoSsd.ObjectDetection | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loadingMsg, setLoadingMsg] = useState<string>("Starting camera...");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [aiReady, setAiReady] = useState(false);
   const animationFrameId = useRef<number | null>(null);
 
   const lastBallPos = useRef<{ x: number; y: number } | null>(null);
@@ -35,7 +36,7 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
   const onRepDetectedRef = useRef(onRepDetected);
   onRepDetectedRef.current = onRepDetected;
 
-  // Camera setup — runs immediately, independent of AI models
+  // Camera setup — runs immediately, never blocks on AI
   useEffect(() => {
     async function setupCamera() {
       if (!videoRef.current) return;
@@ -44,14 +45,13 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
           video: { facingMode: "user", width: 1280, height: 720 },
         });
         videoRef.current.srcObject = stream;
-        setLoadingMsg("Loading AI models...");
+        videoRef.current.onloadedmetadata = () => setCameraReady(true);
       } catch (_) {
         try {
-          // fallback: any camera, any resolution
           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
           videoRef.current!.srcObject = stream;
-          setLoadingMsg("Loading AI models...");
-        } catch (err) {
+          videoRef.current!.onloadedmetadata = () => setCameraReady(true);
+        } catch {
           setError("Camera access is required. Please allow camera permissions and reload.");
         }
       }
@@ -64,17 +64,17 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
     };
   }, []);
 
-  // Load AI models — independent of camera, errors are non-fatal per model
+  // Load AI models silently in background — camera shows immediately regardless
   useEffect(() => {
     async function loadModels() {
       try {
         await initBackend();
-      } catch (err) {
-        setError("Failed to initialise AI engine. Please use Chrome or Firefox and reload.");
+      } catch {
+        console.warn("TF backend init failed — AI features disabled");
+        setAiReady(true); // still let camera show
         return;
       }
 
-      // Load pose detector
       try {
         const detector = await poseDetection.createDetector(
           poseDetection.SupportedModels.MoveNet,
@@ -82,10 +82,9 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
         );
         setPoseDetector(detector);
       } catch (err) {
-        console.error("Pose model failed:", err);
+        console.error("Pose model failed (non-fatal):", err);
       }
 
-      // Load ball detector separately — failure is non-fatal
       try {
         const objDetector = await cocoSsd.load({ base: "lite_mobilenet_v2" });
         setBallDetector(objDetector);
@@ -93,7 +92,7 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
         console.error("Ball detection model failed (non-fatal):", err);
       }
 
-      setLoadingMsg("");
+      setAiReady(true);
     }
     loadModels();
   }, []);
@@ -218,12 +217,22 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center">
-      {loadingMsg && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-black/70 backdrop-blur-sm gap-4">
-          <Loader2 className="w-12 h-12 text-primary animate-spin" />
-          <p className="text-primary uppercase tracking-widest font-bold text-sm">{loadingMsg}</p>
+      {/* Camera loading — only shown before camera stream starts */}
+      {!cameraReady && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-20 bg-black gap-4">
+          <Loader2 className="w-10 h-10 text-primary animate-spin" />
+          <p className="text-primary uppercase tracking-widest font-bold text-sm">Starting camera...</p>
         </div>
       )}
+
+      {/* Small non-blocking AI badge — shows while models load in background */}
+      {cameraReady && !aiReady && (
+        <div className="absolute top-3 right-3 z-30 flex items-center gap-2 bg-black/60 backdrop-blur-sm text-white text-xs font-bold uppercase px-3 py-1.5 rounded-full">
+          <Loader2 className="w-3 h-3 animate-spin text-primary" />
+          AI loading...
+        </div>
+      )}
+
       <video
         ref={videoRef}
         autoPlay
