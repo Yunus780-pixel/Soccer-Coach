@@ -97,7 +97,6 @@ export default function PoseCamera({ isActive, onPoseUpdate }: PoseCameraProps) 
 
         if (poses && poses.length > 0) {
           const pose = poses[0];
-          drawSkeleton(pose, ctx!);
           extractMetrics(pose);
         }
       } catch (e) {
