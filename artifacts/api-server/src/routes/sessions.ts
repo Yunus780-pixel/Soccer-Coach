@@ -15,13 +15,21 @@ import {
 
 const router: IRouter = Router();
 
+function serializeSession(session: Record<string, unknown>) {
+  return {
+    ...session,
+    startedAt: session.startedAt instanceof Date ? session.startedAt.toISOString() : session.startedAt,
+    completedAt: session.completedAt instanceof Date ? session.completedAt.toISOString() : session.completedAt ?? null,
+  };
+}
+
 router.get("/sessions", async (req, res): Promise<void> => {
   const sessions = await db
     .select()
     .from(sessionsTable)
     .orderBy(desc(sessionsTable.startedAt))
     .limit(50);
-  res.json(ListSessionsResponse.parse(sessions));
+  res.json(ListSessionsResponse.parse(sessions.map(serializeSession)));
 });
 
 router.post("/sessions", async (req, res): Promise<void> => {
@@ -51,7 +59,7 @@ router.post("/sessions", async (req, res): Promise<void> => {
     })
     .returning();
 
-  res.status(201).json(GetSessionResponse.parse(session));
+  res.status(201).json(GetSessionResponse.parse(serializeSession(session)));
 });
 
 router.get("/sessions/:id", async (req, res): Promise<void> => {
@@ -72,7 +80,7 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(GetSessionResponse.parse(session));
+  res.json(GetSessionResponse.parse(serializeSession(session)));
 });
 
 router.patch("/sessions/:id", async (req, res): Promise<void> => {
@@ -105,7 +113,7 @@ router.patch("/sessions/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(UpdateSessionResponse.parse(session));
+  res.json(UpdateSessionResponse.parse(serializeSession(session)));
 });
 
 router.get("/leaderboard", async (req, res): Promise<void> => {
