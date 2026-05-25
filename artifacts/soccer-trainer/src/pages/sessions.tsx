@@ -23,6 +23,9 @@ function statusBadge(status: string) {
   if (status === "in_progress") {
     return <Badge variant="secondary" className="gap-1"><Clock className="w-3 h-3" />In Progress</Badge>;
   }
+  if (status === "pending" || status === "not_done") {
+    return <Badge variant="outline" className="gap-1 text-muted-foreground"><Clock className="w-3 h-3" />Not Done</Badge>;
+  }
   return <Badge variant="outline" className="gap-1"><XCircle className="w-3 h-3" />{status}</Badge>;
 }
 
@@ -50,7 +53,7 @@ export default function Sessions() {
           <History className="w-10 h-10 text-primary" />
         </div>
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight uppercase text-foreground mb-2">
-          Session History
+          Sessions
         </h1>
         <p className="text-muted-foreground uppercase tracking-widest text-sm font-semibold">
           {isLoading ? "Loading..." : `${sessions?.length ?? 0} sessions recorded`}
