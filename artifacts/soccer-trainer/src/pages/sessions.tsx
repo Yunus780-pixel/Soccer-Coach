@@ -1,8 +1,9 @@
 import { useListSessions } from "@workspace/api-client-react";
+import { useLocation } from "wouter";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { History, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { History, CheckCircle2, Clock, XCircle, Play } from "lucide-react";
 
 function formatDate(iso?: string | null) {
   if (!iso) return "—";
@@ -45,6 +46,7 @@ function verdictBadge(verdict?: string | null) {
 
 export default function Sessions() {
   const { data: sessions, isLoading } = useListSessions();
+  const [, setLocation] = useLocation();
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -85,12 +87,19 @@ export default function Sessions() {
               </TableHeader>
               <TableBody>
                 {sessions.map((s) => (
-                  <TableRow key={s.id} className="hover:bg-muted/30">
+                  <TableRow
+                    key={s.id}
+                    className="hover:bg-primary/5 cursor-pointer group"
+                    onClick={() => setLocation(`/train/${s.drillId}`)}
+                  >
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                       {formatDate(s.startedAt)}
                     </TableCell>
                     <TableCell className="font-bold uppercase">{s.playerName}</TableCell>
-                    <TableCell className="text-sm">{s.drillName}</TableCell>
+                    <TableCell className="text-sm flex items-center gap-2">
+                      <Play className="w-3.5 h-3.5 text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                      {s.drillName}
+                    </TableCell>
                     <TableCell className="text-center font-mono font-bold">{s.repCount ?? "—"}</TableCell>
                     <TableCell className="text-center font-mono font-bold text-primary">
                       {s.score ?? "—"}
