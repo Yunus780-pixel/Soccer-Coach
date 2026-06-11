@@ -62,7 +62,7 @@ export default function Home() {
     <div className="max-w-6xl mx-auto px-4 py-8">
       <header className="mb-12 text-center md:text-left">
         <h1 className="text-5xl md:text-7xl font-bold tracking-tight text-primary mb-4 uppercase">
-          FootWork AI
+          PANNA
         </h1>
         <p className="text-xl text-muted-foreground max-w-2xl">
           Professional-grade leg technique training with real-time pose analysis. Select a drill to begin your session.

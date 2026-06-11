@@ -17,7 +17,7 @@ export default function Leaderboard() {
           Global Leaderboard
         </h1>
         <p className="text-muted-foreground uppercase tracking-widest text-sm font-semibold">
-          Top performers in FootWork AI
+          Top performers in PANNA
         </p>
       </header>
 

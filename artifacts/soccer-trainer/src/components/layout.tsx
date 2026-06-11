@@ -25,7 +25,7 @@ export default function Layout({ children }: LayoutProps) {
                 <Activity className="w-6 h-6" />
               </div>
               <span className="font-serif text-2xl font-bold uppercase tracking-wider text-foreground">
-                FootWork<span className="text-primary">AI</span>
+                PAN<span className="text-primary">NA</span>
               </span>
             </div>
           </Link>
