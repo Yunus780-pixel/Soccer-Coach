@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,7 +13,20 @@ import Sessions from "@/pages/sessions";
 
 const queryClient = new QueryClient();
 
+// Dev-only: full-screen 3D Robo-Coach preview for headless screenshots.
+// Lazily imported and gated on DEV so it is tree-shaken out of production.
+const RobotPreview = import.meta.env.DEV
+  ? lazy(() => import("@/pages/robot-preview"))
+  : null;
+
 function Router() {
+  if (RobotPreview && window.location.pathname.endsWith("/__preview")) {
+    return (
+      <Suspense fallback={null}>
+        <RobotPreview />
+      </Suspense>
+    );
+  }
   return (
     <Layout>
       <Switch>

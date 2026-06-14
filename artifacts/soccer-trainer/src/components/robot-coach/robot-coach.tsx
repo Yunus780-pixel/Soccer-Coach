@@ -1,13 +1,14 @@
-// ROBO-COACH entry point.
+// COACH entry point.
 //
-// Renders the real-3D WebGL robot (robot-coach-3d.tsx), which is code-split so
-// three.js only loads when the robot is actually shown. While that chunk loads
+// Renders the realistic 3D human coach (human-coach-3d.tsx) — a Mixamo-rigged
+// glTF driven by the drill choreography via IK. It's code-split so three.js +
+// the model only load when the coach is actually shown. While that chunk loads
 // — and on any device where WebGL/three fails — it falls back to the original
 // 2D SVG robot (robot-coach-2d.tsx), so the demo always shows *something*.
 import { Component, Suspense, lazy, type ReactNode } from "react";
 import RobotCoach2D from "./robot-coach-2d";
 
-const RobotCoach3D = lazy(() => import("./robot-coach-3d"));
+const Coach3D = lazy(() => import("./human-coach-3d"));
 
 interface RobotCoachProps {
   drillName?: string | null;
@@ -36,7 +37,7 @@ export default function RobotCoach(props: RobotCoachProps) {
   return (
     <WebGLBoundary fallback={fallback}>
       <Suspense fallback={fallback}>
-        <RobotCoach3D {...props} />
+        <Coach3D {...props} />
       </Suspense>
     </WebGLBoundary>
   );
