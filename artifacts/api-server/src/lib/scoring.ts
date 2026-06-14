@@ -97,8 +97,10 @@ export function scorePoseData(
   if (possible > 0) {
     score = Math.round((earned / possible) * 100);
   } else {
-    // No pose was measured at all — base a modest score on reps and be honest
-    score = Math.max(10, Math.min(70, 30 + (repCount ?? 0) * 3));
+    // No pose was measured at all — we genuinely couldn't see the form, so we
+    // must NOT hand out a "good" verdict. Cap below the "good" threshold and
+    // say so honestly, rather than praising form we never saw.
+    score = Math.max(10, Math.min(55, 30 + (repCount ?? 0) * 3));
     tips.push(
       "The camera couldn't track your body this time — stand back so your whole body is in view, with good lighting.",
     );

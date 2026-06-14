@@ -45,6 +45,8 @@ export default function Train() {
   // Real end time of the drill — the countdown follows the actual clock, so
   // it stays correct even if the browser tab is hidden for a while.
   const endAtRef = useRef<number | null>(null);
+  // Guards the one-time automatic scoring when the drill timer runs out.
+  const autoSubmittedRef = useRef(false);
 
   // Running totals of real measurements across the whole drill,
   // so the final score reflects the full session — not just one frame.
@@ -129,6 +131,7 @@ export default function Train() {
 
   const handleStart = () => {
     endAtRef.current = Date.now() + (drill?.durationSeconds ?? 0) * 1000;
+    autoSubmittedRef.current = false;
     setIsActive(true);
     setRepCount(0);
     setFeedbackResult(null);
@@ -206,19 +209,14 @@ export default function Train() {
         onSuccess: (result) => {
           setFeedbackResult(result);
 
-          // Read feedback aloud using Web Speech API
+          // Read the real result aloud using the Web Speech API
           if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
-            const verdictText = result.verdict === "excellent"
-              ? "Excellent work!"
-              : result.verdict === "good"
-              ? "Good job!"
-              : result.verdict === "needs_work"
-              ? "Keep working on it."
-              : "Keep practising.";
-            const intro = `AI analysis complete. Score: ${result.score} out of 100. ${verdictText}`;
+            const great = result.verdict === "excellent" || result.verdict === "good";
+            const formText = great ? "Your form is great!" : "Your form needs improvement.";
+            const intro = `Drill complete. You scored ${result.score} out of 100. ${formText}`;
             const tips = (result.tips ?? []).slice(0, 2).join(". ");
-            const full = tips ? `${intro} Here are your coaching tips: ${tips}` : intro;
+            const full = tips ? `${intro} ${tips}` : intro;
             const utterance = new SpeechSynthesisUtterance(full);
             utterance.rate = 0.95;
             utterance.pitch = 1;
@@ -233,6 +231,28 @@ export default function Train() {
       }
     );
   };
+
+  // When the drill timer runs out, automatically score it and announce the
+  // result — no need to press a button.
+  useEffect(() => {
+    if (
+      !isActive &&
+      timeLeft === 0 &&
+      sessionId &&
+      !feedbackResult &&
+      !autoSubmittedRef.current &&
+      !submitFeedback.isPending
+    ) {
+      autoSubmittedRef.current = true;
+      handleSubmitAnalysis();
+    }
+  }, [isActive, timeLeft, sessionId, feedbackResult]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Verdict helpers for the on-screen result.
+  const fbGreat = feedbackResult?.verdict === "excellent" || feedbackResult?.verdict === "good";
+  const fbUnmeasured =
+    feedbackResult?.poseQuality?.kneeAlignment === "not measured" &&
+    feedbackResult?.poseQuality?.hipStability === "not measured";
 
   if (!match) return null;
 
@@ -362,6 +382,69 @@ export default function Train() {
             +1 Rep (Manual)
           </Button>
         )}
+
+        {/* Big, automatic result card — appears the moment the drill ends */}
+        <AnimatePresence>
+          {feedbackResult && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.85, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                transition={{ type: "spring", bounce: 0.35 }}
+                className="bg-card text-card-foreground rounded-2xl shadow-2xl border-2 border-primary/40 p-6 sm:p-8 w-full max-w-md text-center"
+              >
+                <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-1">Your Score</div>
+                <div className="text-7xl font-extrabold font-mono text-primary leading-none">
+                  {feedbackResult.score}<span className="text-3xl text-muted-foreground">/100</span>
+                </div>
+                <div
+                  className={`mt-4 inline-block px-4 py-2 rounded-lg text-lg font-extrabold uppercase tracking-wide ${
+                    fbUnmeasured
+                      ? "bg-amber-100 text-amber-800"
+                      : fbGreat
+                      ? "bg-primary/15 text-primary"
+                      : "bg-destructive/10 text-destructive"
+                  }`}
+                  data-testid="form-verdict"
+                >
+                  {fbUnmeasured ? "⚠️ Couldn't see your form" : fbGreat ? "💪 Form is great!" : "🛠️ Form needs improvement"}
+                </div>
+                {isNewBest && !fbUnmeasured && (
+                  <div className="mt-2 text-yellow-600 font-bold text-sm uppercase tracking-wider">🎉 New Personal Best!</div>
+                )}
+                <ul className="mt-4 text-left space-y-2">
+                  {(feedbackResult.tips ?? []).slice(0, 3).map((tip: string, i: number) => (
+                    <li key={i} className="flex items-start gap-2 text-sm">
+                      <CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                      <span>{tip}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                  <div className="bg-muted/50 rounded-md py-1.5"><div className="text-muted-foreground uppercase font-bold">Knee</div><div className="font-semibold capitalize">{feedbackResult.poseQuality?.kneeAlignment}</div></div>
+                  <div className="bg-muted/50 rounded-md py-1.5"><div className="text-muted-foreground uppercase font-bold">Hip</div><div className="font-semibold capitalize">{feedbackResult.poseQuality?.hipStability}</div></div>
+                  <div className="bg-muted/50 rounded-md py-1.5"><div className="text-muted-foreground uppercase font-bold">Reps</div><div className="font-semibold">{repCount}</div></div>
+                </div>
+                <div className="mt-5 flex gap-2 justify-center">
+                  <Button variant="outline" className="uppercase font-bold" onClick={() => {
+                    setTimeLeft(drill?.durationSeconds || 0);
+                    setFeedbackResult(null);
+                    setRepCount(0);
+                    autoSubmittedRef.current = false;
+                  }}>
+                    <RefreshCw className="mr-2 w-4 h-4" /> Try Again
+                  </Button>
+                  <Button className="uppercase font-bold" onClick={() => setLocation("/")}>Finish</Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Bottom strip: spectators + drill info + actions */}

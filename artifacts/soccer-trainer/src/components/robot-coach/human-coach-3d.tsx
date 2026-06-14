@@ -375,13 +375,16 @@ function HumanRig({
   return (
     <group>
       <primitive object={model} />
-      <mesh ref={ballRef} castShadow renderOrder={2}>
+      {/* renderOrder + depthTest:false → the ball always draws ON TOP of the
+          player, so the body can never poke through it (it reads as a whole,
+          solid ball resting against the foot/leg rather than clipping it). */}
+      <mesh ref={ballRef} castShadow renderOrder={10}>
         <sphereGeometry args={[rig.ballR, 32, 24]} />
-        <meshStandardMaterial map={ballTex} roughness={0.4} metalness={0.02} emissive="#ffffff" emissiveIntensity={0.12} />
+        <meshStandardMaterial map={ballTex} roughness={0.4} metalness={0.02} emissive="#ffffff" emissiveIntensity={0.12} depthTest={false} />
         {/* soft glow halo so the ball pops against the dark pitch */}
-        <mesh scale={1.35}>
+        <mesh scale={1.35} renderOrder={9}>
           <sphereGeometry args={[rig.ballR, 16, 12]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.12} blending={THREE.AdditiveBlending} depthWrite={false} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.12} blending={THREE.AdditiveBlending} depthWrite={false} depthTest={false} />
         </mesh>
       </mesh>
       <mesh ref={flashRef} material={flashMat} visible={false}>

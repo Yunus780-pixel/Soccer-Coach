@@ -58,10 +58,12 @@ describe("scorePoseData — honest AI scoring", () => {
     expect(result.tips.join(" ")).toContain("camera");
   });
 
-  it("with no pose at all, score comes modestly from reps (and is capped)", () => {
+  it("with no pose at all, score comes modestly from reps and is capped below 'good'", () => {
     expect(scorePoseData({}, 0, DEFAULT_RANGES).score).toBe(30);
-    expect(scorePoseData({}, 12, DEFAULT_RANGES).score).toBe(66);
-    expect(scorePoseData({}, 1000, DEFAULT_RANGES).score).toBe(70); // capped
+    expect(scorePoseData({}, 12, DEFAULT_RANGES).score).toBe(55); // capped
+    expect(scorePoseData({}, 1000, DEFAULT_RANGES).score).toBe(55); // capped
+    // Never claims "good"/"excellent" for form it could not see.
+    expect(scorePoseData({}, 1000, DEFAULT_RANGES).verdict).toBe("needs_work");
   });
 
   it("admits the foot can't be tracked yet", () => {

@@ -49,6 +49,12 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
   const onRepDetectedRef = useRef(onRepDetected);
   onRepDetectedRef.current = onRepDetected;
 
+  // Foot-motion rep counting (reliable even when the small ball isn't detected):
+  // count each quick foot movement / tap as a rep by spotting speed peaks.
+  const lastFootPos = useRef<{ lx: number; ly: number; rx: number; ry: number; t: number } | null>(null);
+  const footPrevSpeed = useRef(0);
+  const footRising = useRef(false);
+
   // Camera setup — runs immediately, never blocks on AI
   useEffect(() => {
     async function setupCamera() {
@@ -153,6 +159,7 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
           const poses = await poseDetector.estimatePoses(video);
           if (poses.length > 0) {
             extractMetrics(poses[0]);
+            detectFootReps(poses[0]);
             drawSkeleton(ctx, poses[0]);
           }
         } catch (_) {}
@@ -284,6 +291,62 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
     let deg = Math.abs((angle * 180) / Math.PI);
     if (deg > 180) deg = 360 - deg;
     return deg;
+  };
+
+  // Count a rep on each quick foot movement (a speed peak), normalised by body
+  // size so it works whether the player is near or far from the camera. This is
+  // far more reliable than detecting the small ball, so reps climb steadily as
+  // the player works the drill.
+  const detectFootReps = (pose: poseDetection.Pose) => {
+    const kp = pose.keypoints;
+    if (!kp) return;
+    const okk = (i: number) => kp[i] && (kp[i].score ?? 0) > MIN_SCORE;
+    const haveL = okk(KP.leftAnkle);
+    const haveR = okk(KP.rightAnkle);
+    if (!haveL && !haveR) {
+      lastFootPos.current = null;
+      return;
+    }
+
+    // Body scale = torso length (shoulder→hip), so thresholds are size-independent.
+    let torso = 0;
+    if (okk(KP.leftShoulder) && okk(KP.leftHip)) {
+      torso = Math.hypot(kp[KP.leftShoulder].x - kp[KP.leftHip].x, kp[KP.leftShoulder].y - kp[KP.leftHip].y);
+    } else if (okk(KP.rightShoulder) && okk(KP.rightHip)) {
+      torso = Math.hypot(kp[KP.rightShoulder].x - kp[KP.rightHip].x, kp[KP.rightShoulder].y - kp[KP.rightHip].y);
+    }
+    torso = Math.max(torso, 40);
+
+    const now = Date.now();
+    const lx = haveL ? kp[KP.leftAnkle].x : NaN;
+    const ly = haveL ? kp[KP.leftAnkle].y : NaN;
+    const rx = haveR ? kp[KP.rightAnkle].x : NaN;
+    const ry = haveR ? kp[KP.rightAnkle].y : NaN;
+
+    const prev = lastFootPos.current;
+    if (prev && now > prev.t) {
+      const dt = (now - prev.t) / 1000;
+      const sp = (x: number, y: number, px: number, py: number) =>
+        Number.isFinite(x) && Number.isFinite(px) ? Math.hypot(x - px, y - py) / dt : 0;
+      const speed = Math.max(sp(lx, ly, prev.lx, prev.ly), sp(rx, ry, prev.rx, prev.ry)) / torso;
+
+      const HI = 1.8; // torso-lengths/sec — a real tap/kick clears this
+      const cooldown = 250;
+      if (speed > footPrevSpeed.current) footRising.current = true;
+      // Just past a peak above HI → count one rep
+      if (
+        footRising.current &&
+        speed < footPrevSpeed.current * 0.6 &&
+        footPrevSpeed.current > HI &&
+        now - lastRepTime.current > cooldown
+      ) {
+        footRising.current = false;
+        lastRepTime.current = now;
+        onRepDetectedRef.current?.();
+      }
+      footPrevSpeed.current = speed;
+    }
+    lastFootPos.current = { lx, ly, rx, ry, t: now };
   };
 
   const extractMetrics = (pose: poseDetection.Pose) => {
