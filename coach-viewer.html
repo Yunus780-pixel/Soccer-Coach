@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PANNA · 3D Coach Viewer</title>
+<style>
+  :root { --green:#16a34a; --green2:#4ade80; --bg:#0b1220; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:#e2e8f0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; overflow:hidden; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+  #bar { position:fixed; top:0; left:0; right:0; z-index:10; display:flex; gap:12px; align-items:center;
+    padding:10px 14px; background:linear-gradient(#0b1220ee, #0b122000); }
+  #bar .brand { font-weight:800; letter-spacing:1px; font-size:15px; }
+  #bar .brand b { color:var(--green2); }
+  select { background:#0f172a; color:#e2e8f0; border:1px solid #334155; border-radius:8px;
+    padding:7px 10px; font-size:13px; font-weight:600; }
+  .hint { color:#94a3b8; font-size:12px; }
+  .chip { position:fixed; z-index:10; background:#000000aa; border-radius:999px; padding:6px 12px;
+    font-size:12px; font-weight:700; letter-spacing:.5px; }
+  #badge { top:48px; left:14px; display:flex; align-items:center; gap:8px; text-transform:uppercase; }
+  #badge .dot { width:8px; height:8px; border-radius:50%; background:var(--green2); }
+  #knee { bottom:14px; left:14px; font-family: ui-monospace, monospace; }
+  #knee .v { color:var(--green2); font-weight:800; }
+  #knee .ideal { color:#ffffff99; margin-left:8px; }
+  #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    z-index:20; font-size:16px; color:#cbd5e1; }
+  #err { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:30;
+    padding:30px; text-align:center; color:#fca5a5; font-size:14px; line-height:1.5; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="bar">
+    <span class="brand">PAN<b>NA</b> · 3D Coach</span>
+    <select id="drill"></select>
+    <span class="hint">drag to orbit · the coach demonstrates each drill on a loop</span>
+  </div>
+  <div id="badge" class="chip"><span class="dot"></span><span>Coach</span></div>
+  <div id="knee" class="chip"><span class="v">KNEE —°</span><span class="ideal"></span></div>
+  <div id="loading">Loading 3D coach…</div>
+  <div id="err"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.180.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { clone as skeletonClone } from "three/addons/utils/SkeletonUtils.js";
+
+// Model is fetched from a CDN (needs internet). Swap for your own footballer if you like.
+const MODEL_URL = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r180/examples/models/gltf/Soldier.glb";
+
+// ───────────────────────── choreography (ported from motions.ts/engine.ts) ──
+const GROUND_Y = 262, BALL_R = 13, BALL_GROUND_Y = GROUND_Y - BALL_R;
+const THIGH = 46, SHIN = 46, PELVIS_STAND_Y = GROUND_Y - (THIGH + SHIN) + 6;
+const CENTER = 200, BALL_TOP = BALL_GROUND_Y - BALL_R;
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const vlerp = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
+const easeIn = t => t * t;
+const easeOut = t => 1 - (1 - t) * (1 - t);
+const easeInOut = t => t * t * (3 - 2 * t);
+const osc = (phase, cycles, amp, center = 0, offset = 0) =>
+  center + amp * Math.sin((phase * cycles + offset) * Math.PI * 2);
+const arcY = (t, y0, y1, lift) => lerp(y0, y1, t) - lift * 4 * t * (1 - t);
+const mirror = (v, center = CENTER) => ({ x: 2 * center - v.x, y: v.y });
+const hump = t => Math.sin(clamp(t, 0, 1) * Math.PI);
+const endsHigh = p => (Math.cos(p * Math.PI * 2) + 1) / 2;
+
+function seq(keys) {
+  const sorted = [...keys].sort((a, b) => a.at - b.at);
+  const first = sorted[0];
+  const wrapped = [...sorted, { at: 1 + first.at, v: first.v, ease: first.ease }];
+  return (phase) => {
+    let p = phase - Math.floor(phase);
+    if (p < first.at) p += 1;
+    for (let i = 0; i < wrapped.length - 1; i++) {
+      const a = wrapped[i], b = wrapped[i + 1];
+      if (p >= a.at && p <= b.at) {
+        const span = b.at - a.at;
+        const t = span <= 0 ? 0 : (p - a.at) / span;
+        const e = (b.ease ?? easeInOut)(clamp(t, 0, 1));
+        return vlerp(a.v, b.v, e);
+      }
+    }
+    return { ...first.v };
+  };
+}
+
+const corverQuickTouches = { id:"corver", view:"front", duration:0.82, idealKnee:[110,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const ball = { x: CENTER + 12 * Math.sin(p * Math.PI * 2), y: BALL_GROUND_Y };
+  const rightActive = p < 0.5;
+  const localT = rightActive ? p / 0.5 : (p - 0.5) / 0.5;
+  const poke = hump(localT);
+  const restR = { x: CENTER + 22, y: GROUND_Y };
+  const contactR = { x: CENTER + 6, y: GROUND_Y - 6 };
+  const footR = rightActive ? { x: lerp(restR.x, contactR.x, poke), y: lerp(restR.y, contactR.y, poke) } : restR;
+  const footL = !rightActive ? mirror({ x: lerp(restR.x, contactR.x, poke), y: lerp(restR.y, contactR.y, poke) }) : mirror(restR);
+  const touching = poke > 0.78;
+  return { pelvis:{x:CENTER,y:PELVIS_STAND_Y+3+osc(p,2,2,0,0.25)}, torsoLean:0, footL, footR,
+    ball:{...ball,spin:0}, watchLeg: rightActive?"R":"L", flash: touching?{x:ball.x,y:BALL_TOP}:undefined };
+}};
+
+const vPullBall = seq([
+  {at:0.0,v:{x:236,y:BALL_GROUND_Y}}, {at:0.35,v:{x:176,y:BALL_GROUND_Y},ease:easeIn},
+  {at:0.55,v:{x:182,y:BALL_GROUND_Y},ease:easeOut}, {at:1.0,v:{x:236,y:BALL_GROUND_Y},ease:easeInOut} ]);
+const vPullFoot = seq([
+  {at:0.0,v:{x:236,y:BALL_TOP}}, {at:0.35,v:{x:176,y:BALL_TOP},ease:easeIn},
+  {at:0.5,v:{x:174,y:GROUND_Y-26},ease:easeOut}, {at:0.72,v:{x:205,y:GROUND_Y},ease:easeInOut},
+  {at:1.0,v:{x:236,y:BALL_TOP},ease:easeInOut} ]);
+const vPullTurns = { id:"vpull", view:"side", duration:1.7, idealKnee:[110,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const ball = vPullBall(p); const footR = vPullFoot(p);
+  const contact = footR.y > BALL_TOP - 4 && Math.abs(footR.x - ball.x) < 14;
+  return { pelvis:{x:182,y:PELVIS_STAND_Y+4+osc(p,1,2)}, torsoLean:8, footL:{x:176,y:GROUND_Y}, footR,
+    ball:{...ball}, watchLeg:"R", flash: contact?{x:ball.x,y:BALL_TOP}:undefined };
+}};
+
+const TT_TOP = BALL_TOP - 2;
+const toeTapFoot = seq([
+  {at:0.0,v:{x:CENTER+17,y:GROUND_Y}}, {at:0.1,v:{x:CENTER+10,y:TT_TOP-6},ease:easeOut},
+  {at:0.22,v:{x:CENTER+3,y:TT_TOP},ease:easeIn}, {at:0.4,v:{x:CENTER+17,y:GROUND_Y},ease:easeOut} ]);
+const toeTaps = { id:"toetaps", view:"front", duration:1.15, idealKnee:[110,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const footR = toeTapFoot(p); const footL = mirror(toeTapFoot(p + 0.5));
+  const tapping = p < 0.5 ? "R" : "L"; const tapPhase = p < 0.5 ? p : p - 0.5;
+  const touching = Math.abs(tapPhase - 0.22) < 0.045;
+  return { pelvis:{x:CENTER,y:PELVIS_STAND_Y+3+osc(p,2,2.4,0,0.25)}, torsoLean:0, footL, footR,
+    ball:{x:CENTER,y:BALL_GROUND_Y,spin:0}, watchLeg:tapping, flash: touching?{x:CENTER,y:TT_TOP}:undefined };
+}};
+
+const srRightFoot = seq([
+  {at:0.0,v:{x:238,y:BALL_TOP}}, {at:0.25,v:{x:200,y:BALL_TOP},ease:easeInOut},
+  {at:0.5,v:{x:164,y:BALL_TOP},ease:easeInOut}, {at:0.62,v:{x:172,y:GROUND_Y-4},ease:easeOut},
+  {at:0.82,v:{x:214,y:GROUND_Y},ease:easeInOut}, {at:1.0,v:{x:238,y:BALL_TOP},ease:easeInOut} ]);
+const soleRollDribble = { id:"soleroll", view:"front", duration:1.9, idealKnee:[110,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const footR = srRightFoot(p); const footL = mirror(srRightFoot(p + 0.5));
+  const ball = { x: CENTER + 40 * Math.cos(p * Math.PI * 2), y: BALL_GROUND_Y };
+  return { pelvis:{x:CENTER+22*Math.cos(p*Math.PI*2),y:PELVIS_STAND_Y+4}, torsoLean:0, footL, footR,
+    ball:{...ball,spin:-ball.x/BALL_R}, watchLeg: p<0.5?"R":"L" };
+}};
+
+const JG_CONTACT_Y = GROUND_Y - 44, JG_APEX_Y = 116;
+const jugglingStarter = { id:"juggle", view:"side", duration:1.1, idealKnee:[100,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const ballY = arcY(p, JG_CONTACT_Y, JG_CONTACT_Y, JG_CONTACT_Y - JG_APEX_Y);
+  const ball = { x: 214 + 4 * Math.sin(p * Math.PI * 2), y: ballY };
+  const lift = endsHigh(p);
+  const footR = { x: 210 + 10 * lift, y: GROUND_Y - 50 * lift };
+  const touching = lift > 0.82;
+  return { pelvis:{x:184,y:PELVIS_STAND_Y+3-4*lift}, torsoLean:6, footL:{x:178,y:GROUND_Y}, footR,
+    ball, watchLeg:"R", flash: touching?{x:ball.x,y:Math.max(ball.y,JG_CONTACT_Y-6)}:undefined };
+}};
+
+const KB_FOOT_CONTACT_Y = GROUND_Y - 42, KB_KNEE_CONTACT_Y = GROUND_Y - 92;
+const kneeBounceCombo = { id:"kneebounce", view:"side", duration:1.7, idealKnee:[100,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  let ball;
+  if (p < 0.5) { const t = p / 0.5; ball = { x: lerp(212,206,t), y: arcY(t, KB_FOOT_CONTACT_Y, KB_KNEE_CONTACT_Y, 70) }; }
+  else { const t = (p - 0.5) / 0.5; ball = { x: lerp(206,212,t), y: arcY(t, KB_KNEE_CONTACT_Y, KB_FOOT_CONTACT_Y, 96) }; }
+  const footBounce = endsHigh(p); const kneeLift = hump(p);
+  const footR = { x: 208 + 8 * footBounce + 14 * kneeLift, y: GROUND_Y - 46 * footBounce - 78 * kneeLift };
+  const footContact = footBounce > 0.84, kneeContact = kneeLift > 0.84;
+  return { pelvis:{x:184,y:PELVIS_STAND_Y+3-5*kneeLift}, torsoLean:7, footL:{x:178,y:GROUND_Y}, footR,
+    ball, watchLeg:"R", flash:(footContact||kneeContact)?{x:ball.x,y:ball.y}:undefined };
+}};
+
+const PS_REST = { x: 226, y: BALL_GROUND_Y };
+const powerStrikeForm = { id:"strike", view:"side", duration:2.0, idealKnee:[110,160], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const footR = seq([
+    {at:0.0,v:{x:198,y:GROUND_Y}}, {at:0.32,v:{x:158,y:GROUND_Y-30},ease:easeInOut},
+    {at:0.46,v:{x:226,y:GROUND_Y-6},ease:easeIn}, {at:0.6,v:{x:256,y:GROUND_Y-60},ease:easeOut},
+    {at:0.8,v:{x:214,y:GROUND_Y},ease:easeInOut}, {at:1.0,v:{x:198,y:GROUND_Y},ease:easeInOut} ])(p);
+  let ball;
+  if (p < 0.46) ball = { ...PS_REST };
+  else if (p < 0.74) { const t = (p - 0.46) / 0.28; ball = { x: lerp(PS_REST.x, 470, easeOut(t)), y: arcY(t, PS_REST.y, 150, 120), spin: t * 30 }; }
+  else ball = p < 0.93 ? { ...PS_REST, hidden: true } : { ...PS_REST };
+  const striking = p > 0.42 && p < 0.5;
+  return { pelvis:{x:176,y:PELVIS_STAND_Y+2+osc(p,1,2)}, torsoLean:12, footL:{x:188,y:GROUND_Y}, footR,
+    ball, watchLeg:"R", flash: striking?{x:PS_REST.x,y:BALL_TOP}:undefined };
+}};
+
+const WALL_X = 366, WP_REST_X = 214;
+const wallPassPrecision = { id:"wallpass", view:"side", duration:2.1, idealKnee:[125,165], pose:(phase)=>{
+  const p = phase - Math.floor(phase);
+  const ball = seq([
+    {at:0.0,v:{x:WP_REST_X,y:BALL_GROUND_Y}}, {at:0.12,v:{x:WP_REST_X,y:BALL_GROUND_Y}},
+    {at:0.34,v:{x:WALL_X,y:BALL_GROUND_Y},ease:easeOut}, {at:0.58,v:{x:WP_REST_X+8,y:BALL_GROUND_Y},ease:easeIn},
+    {at:0.72,v:{x:WP_REST_X,y:BALL_GROUND_Y},ease:easeOut}, {at:1.0,v:{x:WP_REST_X,y:BALL_GROUND_Y},ease:easeInOut} ])(p);
+  const footR = seq([
+    {at:0.0,v:{x:196,y:GROUND_Y}}, {at:0.12,v:{x:188,y:GROUND_Y-4},ease:easeOut},
+    {at:0.2,v:{x:212,y:GROUND_Y-4},ease:easeIn}, {at:0.34,v:{x:198,y:GROUND_Y},ease:easeInOut},
+    {at:0.6,v:{x:206,y:GROUND_Y-5},ease:easeOut}, {at:0.72,v:{x:200,y:GROUND_Y},ease:easeInOut},
+    {at:1.0,v:{x:196,y:GROUND_Y},ease:easeInOut} ])(p);
+  const passing = p > 0.14 && p < 0.22, hitsWall = p > 0.32 && p < 0.37;
+  return { pelvis:{x:178,y:PELVIS_STAND_Y+3+osc(p,1,1.5)}, torsoLean:8, footL:{x:172,y:GROUND_Y}, footR,
+    ball:{...ball, wall:WALL_X}, watchLeg:"R",
+    flash: passing?{x:WP_REST_X+6,y:BALL_TOP}:hitsWall?{x:WALL_X,y:BALL_TOP}:undefined };
+}};
+
+const idle = { id:"idle", view:"front", duration:2.4, idealKnee:[110,150], pose:(phase)=>{
+  const p = phase - Math.floor(phase); const bob = osc(p,1,2.5);
+  return { pelvis:{x:186,y:PELVIS_STAND_Y+2+bob}, torsoLean:osc(p,1,1.5),
+    footL:{x:186-17,y:GROUND_Y}, footR:{x:186+17,y:GROUND_Y}, ball:{x:252,y:BALL_GROUND_Y,spin:0}, watchLeg:"R" };
+}};
+
+const DRILLS = [
+  { label:"Corver Quick Touches", m:corverQuickTouches },
+  { label:"V-Pull Turns", m:vPullTurns },
+  { label:"Toe Taps", m:toeTaps },
+  { label:"Sole Roll Dribble", m:soleRollDribble },
+  { label:"Juggling Starter", m:jugglingStarter },
+  { label:"Knee Bounce Combo", m:kneeBounceCombo },
+  { label:"Power Strike Form", m:powerStrikeForm },
+  { label:"Wall Pass Precision", m:wallPassPrecision },
+];
+
+// ───────────────────────── scene + IK rig (ported from human-coach-3d.tsx) ──
+const TARGET_HEIGHT = 1.75, CENTER_X = 200, LEG_SPAN = THIGH + SHIN;
+const HIP_LIFT = 0.035, HEAD_PITCH = 0.24, MAX_REACH = 0.985;
+const TRAIL_LEN = 44, TRAIL_DT = 0.04;
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+const _A = new THREE.Vector3(), _d = new THREE.Vector3(), _dl = new THREE.Vector3(), _pq = new THREE.Quaternion();
+const _hip = new THREE.Vector3(), _to = new THREE.Vector3(), _dir = new THREE.Vector3(), _tc = new THREE.Vector3();
+const _mid = new THREE.Vector3(), _perp = new THREE.Vector3(), _knee = new THREE.Vector3(), _toe = new THREE.Vector3();
+const _qx = new THREE.Quaternion(), _qh = new THREE.Quaternion(), _w = new THREE.Vector3();
+
+function aimBone(bone, childDir, target) {
+  bone.getWorldPosition(_A);
+  _d.copy(target).sub(_A);
+  if (_d.lengthSq() < 1e-10) return;
+  _d.normalize();
+  bone.parent.getWorldQuaternion(_pq).invert();
+  _dl.copy(_d).applyQuaternion(_pq).normalize();
+  bone.quaternion.setFromUnitVectors(childDir, _dl);
+  bone.updateMatrixWorld(true);
+}
+function solveLeg(b, target, L1, L2, pole, forward) {
+  b.up.getWorldPosition(_hip);
+  _to.copy(target).sub(_hip);
+  let dist = _to.length();
+  const maxR = (L1 + L2) * MAX_REACH, minR = Math.abs(L1 - L2) + 1e-3;
+  dist = clamp(dist, minR, maxR);
+  _dir.copy(_to).setLength(dist); _tc.copy(_hip).add(_dir); _dir.normalize();
+  const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+  const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+  _mid.copy(_hip).addScaledVector(_dir, a);
+  _perp.copy(pole).addScaledVector(_dir, -pole.dot(_dir));
+  if (_perp.lengthSq() < 1e-6) _perp.set(0, 1, 0).addScaledVector(_dir, -_dir.y);
+  _perp.normalize();
+  _knee.copy(_mid).addScaledVector(_perp, h);
+  aimBone(b.up, b.dUp, _knee);
+  aimBone(b.leg, b.dLeg, _tc);
+  const lift = clamp(target.y / (0.35 * TARGET_HEIGHT), 0, 1);
+  _toe.copy(forward).setY(-0.12 - lift * 0.5).normalize().multiplyScalar(L2 * 0.6).add(_tc);
+  aimBone(b.foot, b.dFoot, _toe);
+}
+
+function ballTexture() {
+  const s = 256, c = document.createElement("canvas"); c.width = c.height = s;
+  const x = c.getContext("2d"); x.fillStyle = "#f8fafc"; x.fillRect(0, 0, s, s); x.fillStyle = "#0f172a";
+  for (const [u, v, r] of [[0.5,0.22,0.1],[0.2,0.5,0.092],[0.8,0.5,0.092],[0.36,0.8,0.082],[0.64,0.8,0.082],[0.5,0.52,0.06]]) {
+    x.beginPath(); const cx = u*s, cy = v*s, rad = r*s;
+    for (let i = 0; i < 5; i++) { const a = i/5*Math.PI*2 - Math.PI/2; const px = cx+Math.cos(a)*rad, py = cy+Math.sin(a)*rad; i?x.lineTo(px,py):x.moveTo(px,py); }
+    x.closePath(); x.fill();
+  }
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t;
+}
+
+const app = document.getElementById("app");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#0b1220");
+scene.fog = new THREE.Fog("#0b1220", 6, 16);
+
+const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enablePan = false; controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.6;
+controls.minPolarAngle = 0.7; controls.maxPolarAngle = 1.62; controls.target.set(0, 0.85, 0);
+
+scene.add(new THREE.HemisphereLight("#bcd9ff", "#0a140d", 0.55));
+const key = new THREE.DirectionalLight("#fff6e6", 2.4); key.position.set(3.5, 6, 3); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004;
+key.shadow.camera.near = 0.5; key.shadow.camera.far = 20;
+key.shadow.camera.left = -4; key.shadow.camera.right = 4; key.shadow.camera.top = 5; key.shadow.camera.bottom = -1;
+scene.add(key);
+const fill = new THREE.DirectionalLight("#86efac", 0.5); fill.position.set(-5, 3, -3); scene.add(fill);
+const rim = new THREE.DirectionalLight("#9ec5ff", 0.7); rim.position.set(0, 2, -6); scene.add(rim);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(9, 56), new THREE.MeshStandardMaterial({ color: "#123a26", roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const grid = new THREE.GridHelper(18, 36, "#2c5a3f", "#1c3a28"); grid.position.y = 0.004; scene.add(grid);
+
+const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.5, metalness: 0.02 }));
+ballMesh.castShadow = true; scene.add(ballMesh);
+const flash = new THREE.Mesh(new THREE.RingGeometry(0.7, 1.0, 28), new THREE.MeshBasicMaterial({ color: "#4ade80", transparent: true, opacity: 0, side: THREE.DoubleSide }));
+flash.visible = false; scene.add(flash);
+const wall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.6, 0.9), new THREE.MeshStandardMaterial({ color: "#dbe4ee", metalness: 0.4, roughness: 0.4 }));
+wall.visible = false; scene.add(wall);
+
+function makeTrail(hex) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRAIL_LEN * 3), 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(TRAIL_LEN * 3), 3));
+  geo.setDrawRange(0, 0);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true }));
+  line.frustumCulled = false; scene.add(line);
+  return { line, base: new THREE.Color(hex), buf: [] };
+}
+const footTrail = makeTrail("#4ade80"), ballTrail = makeTrail("#fde68a");
+function pushTrail(tr, p) { tr.buf.push([p.x, p.y, p.z]); if (tr.buf.length > TRAIL_LEN) tr.buf.shift(); }
+function drawTrail(tr) {
+  const n = tr.buf.length; const pos = tr.line.geometry.attributes.position.array, col = tr.line.geometry.attributes.color.array;
+  for (let i = 0; i < n; i++) { const p = tr.buf[i]; pos[i*3]=p[0]; pos[i*3+1]=p[1]; pos[i*3+2]=p[2];
+    const f = ((i + 1) / n) ** 2; col[i*3]=tr.base.r*f; col[i*3+1]=tr.base.g*f; col[i*3+2]=tr.base.b*f; }
+  tr.line.geometry.setDrawRange(0, n);
+  tr.line.geometry.attributes.position.needsUpdate = true; tr.line.geometry.attributes.color.needsUpdate = true;
+}
+
+// ───────────────────────── load model + drive ──
+let rig = null, model = null, mixer = null, motion = corverQuickTouches, view = "front";
+let S = 0.01, depth = 0.09, ballZ = 0;
+const forward = new THREE.Vector3();
+const clock = new THREE.Clock();
+let sampleAcc = 0, kneeAcc = 0, prevBallX = 0, ballSpin = 0, flashStart = -1, prevHidden = false;
+
+function setView(v) {
+  view = v;
+  forward.set(v === "side" ? 1 : 0, 0, v === "side" ? 0 : 1);
+  ballZ = v === "side" ? -depth : 0.06;
+  if (model) model.rotation.y = v === "side" ? -Math.PI / 2 : Math.PI;
+  if (v === "side") camera.position.set(3.0, 1.35, 3.4); else camera.position.set(0, 1.3, 4.2);
+}
+
+new GLTFLoader().load(MODEL_URL, (gltf) => {
+  model = skeletonClone(gltf.scene);
+  mixer = new THREE.AnimationMixer(model);
+  model.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(model); const size = new THREE.Vector3(); box.getSize(size);
+  const s = TARGET_HEIGHT / (size.y || 1); model.scale.setScalar(s); model.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(model); model.position.set(0, -box.min.y, 0);
+  model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+  scene.add(model);
+
+  const bones = {};
+  model.traverse(o => { if (o.isBone) bones[o.name.replace(/^mixamorig[:_]?/i, "")] = o; });
+  const dir = c => c.position.clone().normalize();
+  const legL = { up: bones.LeftUpLeg, leg: bones.LeftLeg, foot: bones.LeftFoot, dUp: dir(bones.LeftLeg), dLeg: dir(bones.LeftFoot), dFoot: dir(bones.LeftToeBase) };
+  const legR = { up: bones.RightUpLeg, leg: bones.RightLeg, foot: bones.RightFoot, dUp: dir(bones.RightLeg), dLeg: dir(bones.RightFoot), dFoot: dir(bones.RightToeBase) };
+  model.updateMatrixWorld(true);
+  const wp = b => b.getWorldPosition(new THREE.Vector3());
+  const L1 = wp(bones.LeftUpLeg).distanceTo(wp(bones.LeftLeg));
+  const L2 = wp(bones.LeftLeg).distanceTo(wp(bones.LeftFoot));
+  S = ((L1 + L2) * 0.96) / LEG_SPAN;
+  depth = wp(bones.LeftUpLeg).distanceTo(wp(bones.RightUpLeg)) / 2 || 0.09;
+  const spine = [bones.Spine, bones.Spine1, bones.Spine2].filter(Boolean);
+  rig = { bones, legL, legR, L1, L2, S, spine, spineRest: spine.map(b => b.quaternion.clone()),
+    hips: bones.Hips, hipsRest: bones.Hips.quaternion.clone(),
+    neck: bones.Neck, head: bones.Head, neckRest: bones.Neck?.quaternion.clone(), headRest: bones.Head?.quaternion.clone(),
+    ballR: BALL_R * S };
+  ballMesh.scale.setScalar(rig.ballR);
+  const idleClip = gltf.animations.find(a => /idle/i.test(a.name)) ?? gltf.animations[0];
+  if (idleClip) mixer.clipAction(idleClip).play();
+  setView(motion.view);
+  document.getElementById("loading").style.display = "none";
+}, undefined, (e) => {
+  document.getElementById("loading").style.display = "none";
+  const err = document.getElementById("err"); err.style.display = "flex";
+  err.innerHTML = "Couldn't load the 3D model from the internet.<br>This viewer needs an internet connection (it loads three.js and the model from a CDN).<br><br>" + (e?.message || e);
+});
+
+const world = (x, y, z) => _w.set((x - CENTER_X) * S, (GROUND_Y - y) * S, z);
+const kneeEl = document.querySelector("#knee .v"), idealEl = document.querySelector("#knee .ideal");
+
+function frame() {
+  requestAnimationFrame(frame);
+  const delta = clock.getDelta();
+  controls.update();
+  if (rig) {
+    const phase = (clock.elapsedTime / motion.duration) % 1;
+    const pose = motion.pose(phase);
+    mixer.update(delta);
+
+    const pelvisW = world(pose.pelvis.x, pose.pelvis.y, 0).clone(); pelvisW.y += HIP_LIFT;
+    rig.hips.parent.updateWorldMatrix(true, false);
+    rig.hips.position.copy(rig.hips.parent.worldToLocal(pelvisW));
+    rig.hips.quaternion.copy(rig.hipsRest);
+    rig.hips.updateMatrixWorld(true);
+
+    const leanRad = pose.torsoLean * Math.PI / 180;
+    for (let i = 0; i < rig.spine.length; i++) { _qx.setFromAxisAngle(X_AXIS, leanRad * 0.5); rig.spine[i].quaternion.copy(rig.spineRest[i]).multiply(_qx); }
+    if (rig.neck && rig.neckRest) rig.neck.quaternion.copy(rig.neckRest).multiply(_qh.setFromAxisAngle(X_AXIS, HEAD_PITCH));
+    if (rig.head && rig.headRest) rig.head.quaternion.copy(rig.headRest).multiply(_qh.setFromAxisAngle(X_AXIS, HEAD_PITCH));
+    rig.hips.updateMatrixWorld(true);
+
+    const lz = view === "side" ? depth : ballZ, rz = view === "side" ? -depth : ballZ;
+    const footLT = world(pose.footL.x, pose.footL.y, lz).clone();
+    const footRT = world(pose.footR.x, pose.footR.y, rz).clone();
+    solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
+    solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
+
+    const bx = (pose.ball.x - CENTER_X) * S, by = (GROUND_Y - pose.ball.y) * S;
+    ballMesh.visible = !pose.ball.hidden; ballMesh.position.set(bx, by, ballZ);
+    ballSpin -= (bx - prevBallX) / rig.ballR; prevBallX = bx;
+    ballMesh.rotation.set(ballSpin * 0.5, ballSpin, 0);
+
+    if (pose.ball.wall != null) { wall.visible = true; wall.position.set((pose.ball.wall - CENTER_X) * S, 0.8, ballZ); } else wall.visible = false;
+
+    if (pose.flash) {
+      if (flashStart < 0) flashStart = clock.elapsedTime;
+      const e = (clock.elapsedTime - flashStart) / 0.22;
+      if (e <= 1) { flash.visible = true; flash.position.set((pose.flash.x - CENTER_X) * S, (GROUND_Y - pose.flash.y) * S, ballZ);
+        flash.scale.setScalar(0.05 + e * 0.18); flash.quaternion.copy(camera.quaternion); flash.material.opacity = 0.85 * (1 - e); }
+      else flash.visible = false;
+    } else { flashStart = -1; flash.visible = false; }
+
+    sampleAcc += delta;
+    if (sampleAcc >= TRAIL_DT) {
+      sampleAcc = 0;
+      const af = pose.watchLeg === "L" ? footLT : footRT;
+      pushTrail(footTrail, { x: af.x, y: af.y, z: af.z });
+      if (pose.ball.hidden) prevHidden = true;
+      else { if (prevHidden) ballTrail.buf.length = 0; prevHidden = false; pushTrail(ballTrail, { x: bx, y: by, z: ballZ }); }
+      drawTrail(footTrail); drawTrail(ballTrail);
+    }
+
+    kneeAcc += delta;
+    if (kneeAcc >= 0.15) {
+      kneeAcc = 0;
+      const target = pose.watchLeg === "L" ? footLT : footRT;
+      rig.legL.up.getWorldPosition(_A);
+      const reach = clamp(_A.distanceTo(target), 0, rig.L1 + rig.L2);
+      const cos = clamp((rig.L1 ** 2 + rig.L2 ** 2 - reach ** 2) / (2 * rig.L1 * rig.L2), -1, 1);
+      const deg = Math.round(Math.acos(cos) * 180 / Math.PI);
+      const ideal = motion.idealKnee; const ok = !ideal || (deg >= ideal[0] && deg <= ideal[1]);
+      kneeEl.textContent = `KNEE ${deg}° ${ok ? "✓" : "…"}`; kneeEl.style.color = ok ? "#4ade80" : "#fbbf24";
+      idealEl.textContent = ideal ? `ideal ${ideal[0]}–${ideal[1]}°` : "";
+    }
+  }
+  renderer.render(scene, camera);
+}
+
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener("resize", resize); resize();
+frame();
+
+// drill picker
+const sel = document.getElementById("drill");
+DRILLS.forEach((d, i) => { const o = document.createElement("option"); o.value = i; o.textContent = d.label; sel.appendChild(o); });
+sel.addEventListener("change", () => {
+  motion = DRILLS[sel.value].m; clock.elapsedTime = 0; footTrail.buf = []; ballTrail.buf = [];
+  footTrail.line.geometry.setDrawRange(0, 0); ballTrail.line.geometry.setDrawRange(0, 0);
+  setView(motion.view);
+});
+</script>
+</body>
+</html>
