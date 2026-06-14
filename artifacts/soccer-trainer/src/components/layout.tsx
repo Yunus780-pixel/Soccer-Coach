@@ -1,12 +1,32 @@
+import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Activity, Trophy, LayoutDashboard, History } from "lucide-react";
+import { startHeartbeat, setActivity } from "@/lib/presence";
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
+// What to report as the current activity for each route. The train page sets a
+// more specific label (the drill name), so we leave "/train" out here.
+function activityForPath(path: string): string | null {
+  if (path === "/") return "Choosing a drill";
+  if (path.startsWith("/train")) return null; // train page reports the drill
+  if (path.startsWith("/sessions")) return "Viewing sessions";
+  if (path.startsWith("/leaderboard")) return "Leaderboard";
+  if (path.startsWith("/stats")) return "Stats";
+  if (path.startsWith("/monitor")) return "Monitoring";
+  return "Browsing";
+}
+
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
+
+  useEffect(() => startHeartbeat(), []);
+  useEffect(() => {
+    const label = activityForPath(location);
+    if (label) setActivity(label);
+  }, [location]);
 
   const navItems = [
     { href: "/", label: "Training", icon: Activity },

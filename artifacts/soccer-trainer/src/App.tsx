@@ -11,6 +11,9 @@ import Leaderboard from "@/pages/leaderboard";
 import Stats from "@/pages/stats";
 import Sessions from "@/pages/sessions";
 
+// Admin-only dashboard — lazy so its charting library stays out of the main bundle.
+const Monitor = lazy(() => import("@/pages/monitor"));
+
 const queryClient = new QueryClient();
 
 // Dev-only: full-screen 3D Robo-Coach preview for headless screenshots.
@@ -29,14 +32,17 @@ function Router() {
   }
   return (
     <Layout>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/train/:drillId" component={Train} />
-        <Route path="/leaderboard" component={Leaderboard} />
-        <Route path="/stats" component={Stats} />
-        <Route path="/sessions" component={Sessions} />
-        <Route component={NotFound} />
-      </Switch>
+      <Suspense fallback={null}>
+        <Switch>
+          <Route path="/" component={Home} />
+          <Route path="/train/:drillId" component={Train} />
+          <Route path="/leaderboard" component={Leaderboard} />
+          <Route path="/stats" component={Stats} />
+          <Route path="/sessions" component={Sessions} />
+          <Route path="/monitor" component={Monitor} />
+          <Route component={NotFound} />
+        </Switch>
+      </Suspense>
     </Layout>
   );
 }
