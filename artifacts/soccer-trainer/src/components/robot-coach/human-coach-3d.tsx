@@ -31,6 +31,8 @@ const TRAIL_SAMPLE_DT = 0.04;
 const HIP_LIFT = 0.035; // world units: lift the stance so it's not a deep squat
 const HEAD_PITCH = 0.24; // radians: tilt head/neck down to watch the ball
 const MAX_REACH = 0.985; // never fully lock the knee (avoids hyperextension look)
+const BALL_SCALE = 1.5; // bigger than life-size so the ball reads clearly
+const BALL_FRONT = 0.12; // nudge the ball toward the camera so it stays in front of the body
 
 useGLTF.preload(MODEL_URL);
 
@@ -255,7 +257,7 @@ function HumanRig({
     return {
       bones, legL, legR, L1, L2, legLen, S, depth, spine, spineRest,
       hips: bones.Hips, hipsRest, neck: bones.Neck, head: bones.Head, neckRest, headRest,
-      ballR: BALL_R * S,
+      ballR: BALL_R * S * BALL_SCALE,
     };
   }, [model, animations, mixer, side]);
 
@@ -302,12 +304,21 @@ function HumanRig({
     solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
     solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
 
-    // 4) Ball
+    // 4) Ball — nudge horizontally toward the camera so it stays in FRONT of
+    //    the body (not buried in the legs) and reads as a clear, whole ball.
     const bx = (pose.ball.x - CENTER_X) * rig.S;
     const by = (GROUND_Y - pose.ball.y) * rig.S;
+    const cam = state.camera.position;
+    let ox = cam.x - bx;
+    let oz = cam.z - ballZ;
+    const ol = Math.hypot(ox, oz) || 1;
+    ox = (ox / ol) * BALL_FRONT;
+    oz = (oz / ol) * BALL_FRONT;
+    const ballWX = bx + ox;
+    const ballWZ = ballZ + oz;
     if (ballRef.current) {
       ballRef.current.visible = !pose.ball.hidden;
-      ballRef.current.position.set(bx, by, ballZ);
+      ballRef.current.position.set(ballWX, by, ballWZ);
       const dx = bx - prevBallX.current;
       prevBallX.current = bx;
       ballSpin.current -= dx / rig.ballR;
@@ -340,7 +351,7 @@ function HumanRig({
       } else {
         if (prevBallHidden.current) ballBuf.current.length = 0;
         prevBallHidden.current = false;
-        pushSample(ballBuf.current, [bx, by, ballZ]);
+        pushSample(ballBuf.current, [ballWX, by, ballWZ]);
       }
       trailRef.current = { foot: footBuf.current.slice(), ball: ballBuf.current.slice() };
     }
@@ -364,9 +375,14 @@ function HumanRig({
   return (
     <group>
       <primitive object={model} />
-      <mesh ref={ballRef} castShadow>
+      <mesh ref={ballRef} castShadow renderOrder={2}>
         <sphereGeometry args={[rig.ballR, 32, 24]} />
-        <meshStandardMaterial map={ballTex} roughness={0.5} metalness={0.02} />
+        <meshStandardMaterial map={ballTex} roughness={0.4} metalness={0.02} emissive="#ffffff" emissiveIntensity={0.12} />
+        {/* soft glow halo so the ball pops against the dark pitch */}
+        <mesh scale={1.35}>
+          <sphereGeometry args={[rig.ballR, 16, 12]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.12} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
       </mesh>
       <mesh ref={flashRef} material={flashMat} visible={false}>
         <ringGeometry args={[0.7, 1.0, 28]} />
