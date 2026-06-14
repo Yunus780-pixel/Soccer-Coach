@@ -54,7 +54,7 @@ export default function Leaderboard() {
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant={entry.avgScore >= 90 ? "default" : "secondary"} className="text-lg font-mono px-3 py-1">
-                      {entry.avgScore.toFixed(1)}
+                      {entry.avgScore}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-center font-mono font-medium text-muted-foreground">

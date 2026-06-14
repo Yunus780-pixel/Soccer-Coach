@@ -16,7 +16,7 @@ export default function Stats() {
     },
     {
       title: "Average Score",
-      value: stats ? stats.avgScore.toFixed(1) : 0,
+      value: stats?.avgScore ?? 0,
       icon: Target,
       color: "text-primary",
       bg: "bg-primary/10"

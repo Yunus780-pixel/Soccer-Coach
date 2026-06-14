@@ -97,7 +97,7 @@ router.patch("/sessions/:id", async (req, res): Promise<void> => {
   }
 
   const updateData: Record<string, unknown> = { ...parsed.data };
-  if (parsed.data.status === "completed" && !parsed.data.completedAt) {
+  if (parsed.data.status === "completed") {
     updateData.completedAt = new Date();
   }
 
@@ -128,26 +128,31 @@ router.get("/leaderboard", async (req, res): Promise<void> => {
     .orderBy(desc(avg(sessionsTable.score)))
     .limit(20);
 
-  const leaderboard = await Promise.all(
-    rows.map(async (row, index) => {
-      const bestDrillRow = await db
-        .select({ drillName: sessionsTable.drillName })
-        .from(sessionsTable)
-        .where(
-          sql`${sessionsTable.playerName} = ${row.playerName} AND ${sessionsTable.score} IS NOT NULL`
-        )
-        .orderBy(desc(sessionsTable.score))
-        .limit(1);
-
-      return {
-        rank: index + 1,
-        playerName: row.playerName,
-        totalSessions: Number(row.totalSessions),
-        avgScore: Math.round(Number(row.avgScore ?? 0)),
-        bestDrill: bestDrillRow[0]?.drillName ?? "N/A",
-      };
+  // One query for everyone's completed scores, then pick each player's best
+  const scoredSessions = await db
+    .select({
+      playerName: sessionsTable.playerName,
+      drillName: sessionsTable.drillName,
+      score: sessionsTable.score,
     })
-  );
+    .from(sessionsTable)
+    .where(sql`${sessionsTable.status} = 'completed' AND ${sessionsTable.score} IS NOT NULL`);
+
+  const bestByPlayer = new Map<string, { drillName: string; score: number }>();
+  for (const s of scoredSessions) {
+    const current = bestByPlayer.get(s.playerName);
+    if (!current || (s.score ?? 0) > current.score) {
+      bestByPlayer.set(s.playerName, { drillName: s.drillName, score: s.score ?? 0 });
+    }
+  }
+
+  const leaderboard = rows.map((row, index) => ({
+    rank: index + 1,
+    playerName: row.playerName,
+    totalSessions: Number(row.totalSessions),
+    avgScore: Math.round(Number(row.avgScore ?? 0)),
+    bestDrill: bestByPlayer.get(row.playerName)?.drillName ?? "N/A",
+  }));
 
   res.json(GetLeaderboardResponse.parse(leaderboard));
 });
@@ -186,7 +191,7 @@ router.get("/stats/summary", async (req, res): Promise<void> => {
     totalSessions: Number(totals?.totalSessions ?? 0),
     avgScore: Math.round(Number(totals?.avgScore ?? 0)),
     totalPlayers: Number(playerCountRow?.totalPlayers ?? 0),
-    topDrill: topDrillRow?.drillName ?? "Corver Kick Precision",
+    topDrill: topDrillRow?.drillName ?? "No sessions yet",
     completedToday: Number(todayRow?.completedToday ?? 0),
   };
 

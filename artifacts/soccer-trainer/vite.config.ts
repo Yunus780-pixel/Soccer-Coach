@@ -68,6 +68,12 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // Local development: forward /api requests to the api-server.
+    // Set API_PROXY_TARGET=http://localhost:5000 (unset on Replit, where the
+    // platform handles routing).
+    ...(process.env.API_PROXY_TARGET
+      ? { proxy: { "/api": process.env.API_PROXY_TARGET } }
+      : {}),
   },
   preview: {
     port,

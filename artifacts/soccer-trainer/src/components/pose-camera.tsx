@@ -9,7 +9,19 @@ interface PoseCameraProps {
   isActive: boolean;
   onPoseUpdate: (metrics: any) => void;
   onRepDetected?: () => void;
+  drillCategory?: string;
 }
+
+// Bone connections between MoveNet keypoints, for drawing the skeleton
+const SKELETON_EDGES: Array<[number, number]> = [
+  [5, 6],                    // shoulders
+  [5, 7], [7, 9],            // left arm
+  [6, 8], [8, 10],           // right arm
+  [5, 11], [6, 12], [11, 12], // torso
+  [11, 13], [13, 15],        // left leg
+  [12, 14], [14, 16],        // right leg
+];
+const LEG_KEYPOINTS = new Set([11, 12, 13, 14, 15, 16]);
 
 async function initBackend() {
   for (const backend of ["webgl", "cpu"] as const) {
@@ -21,7 +33,7 @@ async function initBackend() {
   throw new Error("No TF backend available");
 }
 
-export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: PoseCameraProps) {
+export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, drillCategory }: PoseCameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [poseDetector, setPoseDetector] = useState<poseDetection.PoseDetector | null>(null);
@@ -31,7 +43,8 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
   const [aiReady, setAiReady] = useState(false);
   const animationFrameId = useRef<number | null>(null);
 
-  const lastBallPos = useRef<{ x: number; y: number } | null>(null);
+  const lastBallSample = useRef<{ x: number; y: number; t: number } | null>(null);
+  const prevBallVy = useRef<number | null>(null);
   const lastRepTime = useRef<number>(0);
   const onRepDetectedRef = useRef(onRepDetected);
   onRepDetectedRef.current = onRepDetected;
@@ -97,6 +110,21 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
     loadModels();
   }, []);
 
+  // Free the AI models' memory — but ONLY when truly leaving the page
+  // (refs, so loading the second model never disposes the first one)
+  const poseDetectorRef = useRef(poseDetector);
+  poseDetectorRef.current = poseDetector;
+  const ballDetectorRef = useRef(ballDetector);
+  ballDetectorRef.current = ballDetector;
+  useEffect(() => {
+    return () => {
+      try {
+        poseDetectorRef.current?.dispose();
+        ballDetectorRef.current?.dispose();
+      } catch (_) {}
+    };
+  }, []);
+
   // Detection loop
   useEffect(() => {
     if (!isActive || !videoRef.current || !canvasRef.current) {
@@ -123,7 +151,10 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
       if (poseDetector) {
         try {
           const poses = await poseDetector.estimatePoses(video);
-          if (poses.length > 0) extractMetrics(poses[0]);
+          if (poses.length > 0) {
+            extractMetrics(poses[0]);
+            drawSkeleton(ctx, poses[0]);
+          }
         } catch (_) {}
       }
 
@@ -151,26 +182,43 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
             ctx.fillStyle = "#16a34a";
             ctx.fill();
 
-            // Rep counting — detect kick via fast ball movement
+            // Rep counting from real ball velocity (pixels per second)
             const now = Date.now();
-            if (lastBallPos.current) {
-              const dx = cx - lastBallPos.current.x;
-              const dy = cy - lastBallPos.current.y;
-              const speed = Math.sqrt(dx * dx + dy * dy);
-              if (speed > 30 && now - lastRepTime.current > 1200) {
+            const prev = lastBallSample.current;
+            if (prev && now > prev.t) {
+              const dt = (now - prev.t) / 1000;
+              const vx = (cx - prev.x) / dt;
+              const vy = (cy - prev.y) / dt;
+              const speed = Math.hypot(vx, vy);
+
+              const isJuggling = drillCategory === "juggling";
+              let isRep: boolean;
+              if (isJuggling) {
+                // A juggle = ball was falling (vy > 0) and is now kicked up
+                // (vy clearly negative). Catches each touch, not just big kicks.
+                isRep = prevBallVy.current !== null && prevBallVy.current > 50 && vy < -150;
+              } else {
+                // A kick/pass = sudden burst of ball speed
+                isRep = speed > 900;
+              }
+
+              const cooldownMs = isJuggling ? 450 : 1000;
+              if (isRep && now - lastRepTime.current > cooldownMs) {
                 lastRepTime.current = now;
                 onRepDetectedRef.current?.();
-                // Flash ring on kick
+                // Flash ring on rep
                 ctx.beginPath();
                 ctx.arc(cx, cy, r + 20, 0, 2 * Math.PI);
                 ctx.strokeStyle = "rgba(22, 163, 74, 0.8)";
                 ctx.lineWidth = 5;
                 ctx.stroke();
               }
+              prevBallVy.current = vy;
             }
-            lastBallPos.current = { x: cx, y: cy };
+            lastBallSample.current = { x: cx, y: cy, t: now };
           } else {
-            lastBallPos.current = null;
+            lastBallSample.current = null;
+            prevBallVy.current = null;
           }
         } catch (_) {}
       }
@@ -182,25 +230,117 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected }: Po
     return () => {
       if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     };
-  }, [isActive, poseDetector, ballDetector]);
+  }, [isActive, poseDetector, ballDetector, drillCategory]);
+
+  // Draw the detected body as a skeleton: glowing green legs (what we score),
+  // softer white upper body.
+  const drawSkeleton = (
+    ctx: CanvasRenderingContext2D,
+    pose: poseDetection.Pose
+  ) => {
+    if (!pose.keypoints) return;
+    const kp = pose.keypoints;
+    const ok = (i: number) => kp[i] && (kp[i].score ?? 0) > 0.3;
+
+    for (const [a, b] of SKELETON_EDGES) {
+      if (!ok(a) || !ok(b)) continue;
+      const isLeg = LEG_KEYPOINTS.has(a) && LEG_KEYPOINTS.has(b);
+      ctx.beginPath();
+      ctx.moveTo(kp[a].x, kp[a].y);
+      ctx.lineTo(kp[b].x, kp[b].y);
+      ctx.strokeStyle = isLeg ? "rgba(22, 163, 74, 0.9)" : "rgba(255, 255, 255, 0.6)";
+      ctx.lineWidth = isLeg ? 5 : 3;
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+
+    for (let i = 5; i < kp.length; i++) {
+      if (!ok(i)) continue;
+      ctx.beginPath();
+      ctx.arc(kp[i].x, kp[i].y, LEG_KEYPOINTS.has(i) ? 7 : 5, 0, 2 * Math.PI);
+      ctx.fillStyle = LEG_KEYPOINTS.has(i) ? "#16a34a" : "rgba(255, 255, 255, 0.85)";
+      ctx.fill();
+    }
+  };
+
+  // MoveNet keypoint indices
+  const KP = {
+    leftShoulder: 5, rightShoulder: 6,
+    leftHip: 11, rightHip: 12,
+    leftKnee: 13, rightKnee: 14,
+    leftAnkle: 15, rightAnkle: 16,
+  } as const;
+  const MIN_SCORE = 0.3;
+
+  // Angle (degrees) at point `center` between the lines center→a and center→b
+  const angleAt = (
+    center: poseDetection.Keypoint,
+    a: poseDetection.Keypoint,
+    b: poseDetection.Keypoint
+  ): number => {
+    const angle =
+      Math.atan2(b.y - center.y, b.x - center.x) -
+      Math.atan2(a.y - center.y, a.x - center.x);
+    let deg = Math.abs((angle * 180) / Math.PI);
+    if (deg > 180) deg = 360 - deg;
+    return deg;
+  };
 
   const extractMetrics = (pose: poseDetection.Pose) => {
     if (!pose.keypoints) return;
-    const hip = pose.keypoints[12];
-    const knee = pose.keypoints[14];
-    const ankle = pose.keypoints[16];
-    let kneeAngle = null;
-    if (hip.score! > 0.3 && knee.score! > 0.3 && ankle.score! > 0.3) {
-      const dx1 = hip.x - knee.x;
-      const dy1 = hip.y - knee.y;
-      const dx2 = ankle.x - knee.x;
-      const dy2 = ankle.y - knee.y;
-      const angle = Math.atan2(dy2, dx2) - Math.atan2(dy1, dx1);
-      let kneeAngleDeg = Math.abs((angle * 180) / Math.PI);
-      if (kneeAngleDeg > 180) kneeAngleDeg = 360 - kneeAngleDeg;
-      kneeAngle = kneeAngleDeg;
+    const kp = pose.keypoints;
+    const visible = (i: number) => kp[i] && (kp[i].score ?? 0) > MIN_SCORE;
+
+    // Knee angle (hip–knee–ankle) for each leg, only when all 3 joints are visible
+    const kneeAngleFor = (hip: number, knee: number, ankle: number) =>
+      visible(hip) && visible(knee) && visible(ankle)
+        ? angleAt(kp[knee], kp[hip], kp[ankle])
+        : null;
+    const kneeAngleLeft = kneeAngleFor(KP.leftHip, KP.leftKnee, KP.leftAnkle);
+    const kneeAngleRight = kneeAngleFor(KP.rightHip, KP.rightKnee, KP.rightAnkle);
+
+    // Hip angle (shoulder–hip–knee): how upright the body is over the leg
+    const hipAngleFor = (shoulder: number, hip: number, knee: number) =>
+      visible(shoulder) && visible(hip) && visible(knee)
+        ? angleAt(kp[hip], kp[shoulder], kp[knee])
+        : null;
+    const hipAngleLeft = hipAngleFor(KP.leftShoulder, KP.leftHip, KP.leftKnee);
+    const hipAngleRight = hipAngleFor(KP.rightShoulder, KP.rightHip, KP.rightKnee);
+
+    const avg = (a: number | null, b: number | null) =>
+      a !== null && b !== null ? (a + b) / 2 : a ?? b;
+
+    // Balance (0–1): level hips + upright torso
+    let balanceScore: number | null = null;
+    if (
+      visible(KP.leftHip) && visible(KP.rightHip) &&
+      visible(KP.leftShoulder) && visible(KP.rightShoulder)
+    ) {
+      const lHip = kp[KP.leftHip], rHip = kp[KP.rightHip];
+      const hipWidth = Math.max(Math.abs(lHip.x - rHip.x), 1);
+      const levelness = 1 - Math.min(Math.abs(lHip.y - rHip.y) / hipWidth, 1);
+
+      const hipMidX = (lHip.x + rHip.x) / 2;
+      const hipMidY = (lHip.y + rHip.y) / 2;
+      const shoulderMidX = (kp[KP.leftShoulder].x + kp[KP.rightShoulder].x) / 2;
+      const shoulderMidY = (kp[KP.leftShoulder].y + kp[KP.rightShoulder].y) / 2;
+      const leanRad = Math.atan2(
+        Math.abs(shoulderMidX - hipMidX),
+        Math.abs(hipMidY - shoulderMidY)
+      );
+      const leanDeg = (leanRad * 180) / Math.PI;
+      const uprightness = 1 - Math.min(leanDeg / 45, 1);
+
+      balanceScore = (levelness + uprightness) / 2;
     }
-    onPoseUpdate({ kneeAngle, hipAngle: 90 });
+
+    onPoseUpdate({
+      kneeAngle: avg(kneeAngleLeft, kneeAngleRight),
+      kneeAngleLeft,
+      kneeAngleRight,
+      hipAngle: avg(hipAngleLeft, hipAngleRight),
+      balanceScore,
+    });
   };
 
   if (error) {

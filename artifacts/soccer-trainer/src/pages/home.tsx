@@ -87,7 +87,7 @@ export default function Home() {
             <Badge 
               key={cat}
               variant={filter === cat ? "default" : "outline"}
-              className="cursor-pointer px-4 py-2 uppercase tracking-wide cursor-pointer hover:bg-primary/90 transition-colors"
+              className="cursor-pointer px-4 py-2 uppercase tracking-wide hover:bg-primary/90 transition-colors"
               onClick={() => setFilter(cat)}
               data-testid={`filter-${cat}`}
             >
@@ -133,7 +133,7 @@ export default function Home() {
                     </div>
                   </div>
                   <CardTitle className="text-2xl uppercase tracking-wide group-hover:text-primary transition-colors">
-                    {drill.name}
+                    {drill.thumbnailEmoji ? `${drill.thumbnailEmoji} ` : ""}{drill.name}
                   </CardTitle>
                   <CardDescription className="uppercase tracking-wider text-xs font-semibold">
                     {drill.category}

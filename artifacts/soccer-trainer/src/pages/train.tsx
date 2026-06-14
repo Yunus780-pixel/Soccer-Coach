@@ -7,19 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle2, Activity, Play, StopCircle, RefreshCw, XCircle, Users } from "lucide-react";
-import { useGetDrill, useSubmitFeedback, useUpdateSession } from "@workspace/api-client-react";
+import { CheckCircle2, Activity, Play, StopCircle, RefreshCw, Trophy, Bot, Eye, EyeOff } from "lucide-react";
+import { useGetDrill, useSubmitFeedback, useListSessions } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import PoseCamera from "@/components/pose-camera";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-
-const SPECTATORS = [
-  { id: 1, name: "Alex P.", initials: "AP" },
-  { id: 2, name: "Jordan M.", initials: "JM" },
-  { id: 3, name: "Coach Riley", initials: "CR" },
-  { id: 4, name: "Sam T.", initials: "ST" },
-];
+import RobotCoach from "@/components/robot-coach/robot-coach";
 
 export default function Train() {
   const [match, params] = useRoute("/train/:drillId");
@@ -34,17 +27,72 @@ export default function Train() {
   });
   
   const submitFeedback = useSubmitFeedback();
-  const updateSession = useUpdateSession();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
   const [isActive, setIsActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [repCount, setRepCount] = useState(0);
-  const [currentPoseMetrics, setCurrentPoseMetrics] = useState<any>(null);
   const [liveQuality, setLiveQuality] = useState<"Good" | "Needs Work" | null>(null);
   const [feedbackResult, setFeedbackResult] = useState<any>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [showRobot, setShowRobot] = useState(true);
+  // Real end time of the drill — the countdown follows the actual clock, so
+  // it stays correct even if the browser tab is hidden for a while.
+  const endAtRef = useRef<number | null>(null);
+
+  // Running totals of real measurements across the whole drill,
+  // so the final score reflects the full session — not just one frame.
+  const metricsAccumRef = useRef({
+    knee: { sum: 0, n: 0 },
+    hip: { sum: 0, n: 0 },
+    balance: { sum: 0, n: 0 },
+  });
+
+  // Personal best for this player + drill from earlier completed sessions
+  const playerName = localStorage.getItem("footwork_player_name") ?? "";
+  const { data: allSessions } = useListSessions();
+  const personalBest = (allSessions ?? [])
+    .filter(
+      (s) =>
+        s.drillId === drillId &&
+        s.playerName === playerName &&
+        s.status === "completed" &&
+        s.score !== null &&
+        (!sessionId || s.id !== parseInt(sessionId, 10))
+    )
+    .reduce<number | null>(
+      (best, s) => (best === null || (s.score ?? 0) > best ? s.score ?? best : best),
+      null
+    );
+  const isNewBest =
+    feedbackResult != null &&
+    (personalBest === null || feedbackResult.score > personalBest);
+
+  // Cheerful beep every time a rep counts
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const playRepSound = useCallback(() => {
+    try {
+      const Ctor =
+        window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctor) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new Ctor();
+      const audioCtx = audioCtxRef.current;
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.25, audioCtx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.16);
+    } catch (_) {
+      // Sound is a bonus — never break the drill over it
+    }
+  }, []);
 
   useEffect(() => {
     if (drill && !isActive && timeLeft === 0 && !feedbackResult) {
@@ -52,21 +100,37 @@ export default function Train() {
     }
   }, [drill]);
 
+  // Stop the coach voice if you leave the page mid-sentence
   useEffect(() => {
-    if (isActive && timeLeft > 0) {
-      timerRef.current = setTimeout(() => setTimeLeft(prev => prev - 1), 1000);
-    } else if (isActive && timeLeft === 0) {
-      handleStop();
-    }
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
-  }, [isActive, timeLeft]);
+  }, []);
+
+  useEffect(() => {
+    if (!isActive) return;
+    const interval = setInterval(() => {
+      if (endAtRef.current === null) return;
+      const remaining = Math.max(
+        0,
+        Math.ceil((endAtRef.current - Date.now()) / 1000)
+      );
+      setTimeLeft(remaining);
+      if (remaining === 0) setIsActive(false);
+    }, 250);
+    return () => clearInterval(interval);
+  }, [isActive]);
 
   const handleStart = () => {
+    endAtRef.current = Date.now() + (drill?.durationSeconds ?? 0) * 1000;
     setIsActive(true);
     setRepCount(0);
     setFeedbackResult(null);
+    metricsAccumRef.current = {
+      knee: { sum: 0, n: 0 },
+      hip: { sum: 0, n: 0 },
+      balance: { sum: 0, n: 0 },
+    };
   };
 
   const handleStop = () => {
@@ -74,24 +138,35 @@ export default function Train() {
   };
 
   const handlePoseUpdate = useCallback((metrics: any) => {
-    setCurrentPoseMetrics(metrics);
-    if (isActive) {
-      // Basic live quality indicator based on knee angle (simplistic example)
-      if (metrics.kneeAngle && metrics.kneeAngle > 120 && metrics.kneeAngle < 160) {
-        setLiveQuality("Good");
-      } else {
-        setLiveQuality("Needs Work");
-      }
+    if (!isActive) return;
+
+    const acc = metricsAccumRef.current;
+    if (typeof metrics.kneeAngle === "number") {
+      acc.knee.sum += metrics.kneeAngle;
+      acc.knee.n++;
+      setLiveQuality(
+        metrics.kneeAngle > 120 && metrics.kneeAngle < 160 ? "Good" : "Needs Work"
+      );
+    }
+    if (typeof metrics.hipAngle === "number") {
+      acc.hip.sum += metrics.hipAngle;
+      acc.hip.n++;
+    }
+    if (typeof metrics.balanceScore === "number") {
+      acc.balance.sum += metrics.balanceScore;
+      acc.balance.n++;
     }
   }, [isActive]);
 
   const handleRepDetected = useCallback(() => {
     setRepCount(c => c + 1);
-  }, []);
+    playRepSound();
+  }, [playRepSound]);
 
   const handleManualRep = () => {
     if (isActive) {
       setRepCount(prev => prev + 1);
+      playRepSound();
     }
   };
 
@@ -101,14 +176,20 @@ export default function Train() {
       return;
     }
 
+    // Send only what the camera really measured — averaged over the whole
+    // drill. Anything we couldn't see is sent as null, never invented.
+    const acc = metricsAccumRef.current;
+    const avgOf = (s: { sum: number; n: number }) =>
+      s.n > 0 ? s.sum / s.n : null;
+
     const payload = {
       drillId,
       poseData: {
-        kneeAngle: currentPoseMetrics?.kneeAngle || 140, // fallback if detection fails
-        hipAngle: currentPoseMetrics?.hipAngle || 90,
-        ankleFlexion: 45,
-        legExtension: 80,
-        balanceScore: 85
+        kneeAngle: avgOf(acc.knee),
+        hipAngle: avgOf(acc.hip),
+        balanceScore: avgOf(acc.balance),
+        ankleFlexion: null,
+        legExtension: null,
       },
       repCount
     };
@@ -137,17 +218,8 @@ export default function Train() {
             utterance.pitch = 1;
             window.speechSynthesis.speak(utterance);
           }
-
-          // Also update session as completed
-          updateSession.mutate({
-            id: parseInt(sessionId, 10),
-            data: {
-              status: "completed",
-              score: result.score,
-              repCount: repCount,
-              feedbackSummary: result.verdict
-            }
-          });
+          // (The server already saved the session as completed with the
+          // score, summary and reps — no second save needed.)
         },
         onError: () => {
           toast({ title: "Analysis Failed", description: "Could not analyze pose data.", variant: "destructive" });
@@ -188,7 +260,7 @@ export default function Train() {
           <div className="text-right">
             <div className="text-xs font-bold uppercase text-muted-foreground">Time</div>
             <div className={`text-3xl font-mono font-bold ${timeLeft <= 5 ? 'text-destructive' : 'text-primary'}`}>
-              00:{timeLeft.toString().padStart(2, '0')}
+              {Math.floor(timeLeft / 60).toString().padStart(2, '0')}:{(timeLeft % 60).toString().padStart(2, '0')}
             </div>
           </div>
           {!isActive && timeLeft === (drill?.durationSeconds || 0) && !feedbackResult && (
@@ -215,10 +287,41 @@ export default function Train() {
 
       {/* FULL-WIDTH Camera */}
       <div className="relative bg-black rounded-xl overflow-hidden shadow-xl border-4 border-border max-w-7xl mx-auto" style={{ height: "75vh" }}>
-        <PoseCamera isActive={isActive} onPoseUpdate={handlePoseUpdate} onRepDetected={handleRepDetected} />
+        <PoseCamera isActive={isActive} onPoseUpdate={handlePoseUpdate} onRepDetected={handleRepDetected} drillCategory={drill?.category} />
 
-        {/* Overlays */}
-        <div className="absolute top-4 left-4 right-4 flex justify-between pointer-events-none z-20">
+        {/* ROBO-COACH demo — shows you the moves while you train */}
+        {showRobot && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="absolute top-16 right-4 z-30 w-[280px] max-w-[42vw] rounded-xl overflow-hidden shadow-2xl border-2 border-primary/70"
+          >
+            <div className="bg-primary text-white px-3 py-1.5 flex items-center gap-1.5">
+              <Bot className="w-4 h-4 shrink-0" />
+              <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
+                Watch the Robot
+              </span>
+            </div>
+            <div className="bg-black aspect-[4/3]">
+              <RobotCoach drillName={drill?.name} category={drill?.category} />
+            </div>
+          </motion.div>
+        )}
+
+        {/* Toggle robot on/off */}
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setShowRobot((v) => !v)}
+          className="absolute top-4 right-4 z-30 opacity-80 hover:opacity-100 uppercase text-xs font-bold gap-1.5"
+          data-testid="btn-toggle-robot"
+        >
+          {showRobot ? <EyeOff className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+          {showRobot ? "Hide Robot" : "Show Robot"}
+        </Button>
+
+        {/* Overlays — kept on the LEFT so the robot panel owns the right side */}
+        <div className="absolute top-4 left-4 flex items-center gap-2 pointer-events-none z-20">
           {isActive && (
             <div className="bg-red-600/90 text-white px-3 py-1 rounded-md text-sm font-bold uppercase tracking-wider flex items-center shadow-lg backdrop-blur-sm">
               <div className="w-2 h-2 rounded-full bg-white animate-pulse mr-2" />
@@ -258,20 +361,20 @@ export default function Train() {
       {/* Bottom strip: spectators + drill info + actions */}
       <div className="max-w-7xl mx-auto mt-3 flex flex-col gap-3">
 
-        {/* Spectator row */}
+        {/* Personal best row */}
         <div className="bg-muted/30 border rounded-lg px-3 py-1.5 flex items-center gap-3 overflow-x-auto">
           <div className="flex items-center text-xs font-bold uppercase tracking-wider text-muted-foreground shrink-0">
-            <Users className="w-3 h-3 mr-1" /> Watching
+            <Trophy className="w-3 h-3 mr-1" /> Personal Best
           </div>
-          {SPECTATORS.map(spec => (
-            <div key={spec.id} className="flex items-center bg-white border shadow-sm rounded-full px-2 py-0.5 shrink-0 gap-1.5">
-              <Avatar className="w-6 h-6 border border-primary/20">
-                <AvatarFallback className="bg-primary/10 text-primary text-[10px] font-bold">{spec.initials}</AvatarFallback>
-              </Avatar>
-              <span className="text-xs font-bold whitespace-nowrap">{spec.name}</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
-            </div>
-          ))}
+          {personalBest !== null ? (
+            <span className="text-sm font-bold" data-testid="text-personal-best">
+              {personalBest}/100 <span className="font-medium text-muted-foreground">— beat it today!</span>
+            </span>
+          ) : (
+            <span className="text-sm text-muted-foreground" data-testid="text-personal-best">
+              No score for this drill yet — today you set the first record! 🚀
+            </span>
+          )}
         </div>
 
         {/* Feedback result or key points */}
@@ -281,6 +384,17 @@ export default function Train() {
               <div className="text-center">
                 <div className="text-5xl font-bold font-mono">{feedbackResult.score}<span className="text-2xl text-primary-foreground/70">/100</span></div>
                 <Badge variant="secondary" className="uppercase font-bold text-primary bg-white mt-1">{feedbackResult.verdict}</Badge>
+                {isNewBest && (
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", bounce: 0.6 }}
+                    className="mt-2 bg-yellow-400 text-yellow-950 text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-md shadow"
+                    data-testid="badge-new-best"
+                  >
+                    🎉 New Personal Best!
+                  </motion.div>
+                )}
               </div>
               <div className="flex gap-6 text-sm flex-wrap">
                 <div><span className="text-primary-foreground/70 uppercase text-xs font-bold block">Knee</span><span className="font-bold capitalize">{feedbackResult.poseQuality?.kneeAlignment}</span></div>
