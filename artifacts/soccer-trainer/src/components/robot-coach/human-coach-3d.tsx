@@ -22,7 +22,7 @@ interface HumanCoachProps {
 
 const GREEN_BRIGHT = "#4ade80";
 const BG = "#0b1220";
-const MODEL_URL = `${import.meta.env.BASE_URL}models/soldier.glb`;
+const MODEL_URL = `${import.meta.env.BASE_URL}models/human.glb`;
 const TARGET_HEIGHT = 1.75; // world units (≈ metres) the model is scaled to
 const CENTER_X = 200; // svg stage centre
 const LEG_SPAN = THIGH + SHIN; // 92 svg px of leg reach
@@ -205,7 +205,7 @@ function HumanRig({
     model.updateMatrixWorld(true);
     const box2 = new THREE.Box3().setFromObject(model);
     model.position.set(0, -box2.min.y, 0);
-    model.rotation.y = side ? -Math.PI / 2 : Math.PI; // face +X (side) / +Z (front)
+    model.rotation.y = side ? Math.PI / 2 : 0; // RPM faces +Z: face +X (side) / camera (front)
     model.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; }
