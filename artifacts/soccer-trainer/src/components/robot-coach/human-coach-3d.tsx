@@ -108,7 +108,34 @@ const _pq = new THREE.Quaternion();
 const _qx = new THREE.Quaternion();
 const _qh = new THREE.Quaternion();
 const _wpos = new THREE.Vector3();
+const _shoulder = new THREE.Vector3();
+const _handT = new THREE.Vector3();
+const _lateral = new THREE.Vector3();
+const _apole = new THREE.Vector3();
+const _down = new THREE.Vector3(0, -1, 0);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
+
+/** Two-bone IK for an arm (shoulder→elbow→hand), no foot-levelling. */
+function solveArm(b: LegBones, target: THREE.Vector3, L1: number, L2: number, pole: THREE.Vector3) {
+  b.up.getWorldPosition(_hip);
+  _to.copy(target).sub(_hip);
+  let dist = _to.length();
+  const maxR = (L1 + L2) * 0.98;
+  const minR = Math.abs(L1 - L2) + 1e-3;
+  dist = clamp(dist, minR, maxR);
+  _dir.copy(_to).setLength(dist);
+  _tc.copy(_hip).add(_dir);
+  _dir.normalize();
+  const a = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist);
+  const h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+  _mid.copy(_hip).addScaledVector(_dir, a);
+  _perp.copy(pole).addScaledVector(_dir, -pole.dot(_dir));
+  if (_perp.lengthSq() < 1e-6) _perp.set(0, -1, 0).addScaledVector(_dir, -_dir.y);
+  _perp.normalize();
+  _knee.copy(_mid).addScaledVector(_perp, h);
+  aimBone(b.up, b.dUp, _knee);
+  aimBone(b.leg, b.dLeg, _tc);
+}
 
 /** Point `bone`'s child-axis (rest direction `childDir`, in bone-local space)
  *  straight at the world position `target`. */
@@ -232,6 +259,15 @@ function HumanRig({
       up: bones.RightUpLeg, leg: bones.RightLeg, foot: bones.RightFoot,
       dUp: dirOf(bones.RightLeg), dLeg: dirOf(bones.RightFoot), dFoot: dirOf(bones.RightToeBase),
     };
+    // Arms (shoulder→elbow→hand) driven by IK for a natural athletic swing.
+    const armL: LegBones = {
+      up: bones.LeftArm, leg: bones.LeftForeArm, foot: bones.LeftHand,
+      dUp: dirOf(bones.LeftForeArm), dLeg: dirOf(bones.LeftHand), dFoot: dirOf(bones.LeftForeArm),
+    };
+    const armR: LegBones = {
+      up: bones.RightArm, leg: bones.RightForeArm, foot: bones.RightHand,
+      dUp: dirOf(bones.RightForeArm), dLeg: dirOf(bones.RightHand), dFoot: dirOf(bones.RightForeArm),
+    };
     // Lengths/width measured in WORLD units (account for every parent scale,
     // incl. the intermediate "Character" node), so IK targets share the scene.
     model.updateMatrixWorld(true);
@@ -239,6 +275,8 @@ function HumanRig({
     const L1 = wp(bones.LeftUpLeg).distanceTo(wp(bones.LeftLeg));
     const L2 = wp(bones.LeftLeg).distanceTo(wp(bones.LeftFoot));
     const legLen = L1 + L2;
+    const aL1 = wp(bones.LeftArm).distanceTo(wp(bones.LeftForeArm));
+    const aL2 = wp(bones.LeftForeArm).distanceTo(wp(bones.LeftHand));
     const S = (legLen * 0.96) / LEG_SPAN; // svg px → world units
     const depth = wp(bones.LeftUpLeg).distanceTo(wp(bones.RightUpLeg)) / 2 || 0.09;
 
@@ -255,7 +293,7 @@ function HumanRig({
     if (idle) mixer.clipAction(idle).play();
 
     return {
-      bones, legL, legR, L1, L2, legLen, S, depth, spine, spineRest,
+      bones, legL, legR, armL, armR, L1, L2, aL1, aL2, legLen, S, depth, spine, spineRest,
       hips: bones.Hips, hipsRest, neck: bones.Neck, head: bones.Head, neckRest, headRest,
       ballR: BALL_R * S * BALL_SCALE,
     };
@@ -285,8 +323,10 @@ function HumanRig({
     rig.hips.quaternion.copy(rig.hipsRest);
     rig.hips.updateMatrixWorld(true);
 
-    // 2) Forward lean (over the ball) layered on the stabilised spine.
-    const leanRad = (pose.torsoLean * Math.PI) / 180;
+    // 2) Forward lean (over the ball) layered on the stabilised spine. Front
+    //    drills have no lean in the choreography, so add an athletic base lean
+    //    so the player leans over the ball instead of standing bolt upright.
+    const leanRad = ((pose.torsoLean + (side ? 0 : 13)) * Math.PI) / 180;
     for (let i = 0; i < rig.spine.length; i++) {
       _qx.setFromAxisAngle(X_AXIS, leanRad * 0.5);
       rig.spine[i].quaternion.copy(rig.spineRest[i]).multiply(_qx);
@@ -303,6 +343,28 @@ function HumanRig({
     const footRT = toWorld(pose.footR.x, pose.footR.y, rz, _knee.clone());
     solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
     solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
+
+    // Arms: relaxed athletic balance + rhythmic counter-swing (the model has no
+    // animation clips, so we drive the arms ourselves). Elbows point back/down.
+    const armLen = rig.aL1 + rig.aL2;
+    _lateral.set(forward.z, 0, -forward.x); // sideways, perpendicular to facing
+    const swing = Math.sin(phase * Math.PI * 4) * 0.16; // subtle forward/back swing
+    // Elbows point down and slightly back so the arms hang naturally.
+    _apole.copy(_down).addScaledVector(forward, -0.4).normalize();
+    rig.armL.up.getWorldPosition(_shoulder);
+    _handT
+      .copy(_shoulder)
+      .addScaledVector(_down, armLen * 0.82)
+      .addScaledVector(_lateral, -armLen * 0.2)
+      .addScaledVector(forward, armLen * (-0.02 + swing));
+    solveArm(rig.armL, _handT, rig.aL1, rig.aL2, _apole);
+    rig.armR.up.getWorldPosition(_shoulder);
+    _handT
+      .copy(_shoulder)
+      .addScaledVector(_down, armLen * 0.82)
+      .addScaledVector(_lateral, armLen * 0.2)
+      .addScaledVector(forward, armLen * (-0.02 - swing));
+    solveArm(rig.armR, _handT, rig.aL1, rig.aL2, _apole);
 
     // 4) Ball — nudge horizontally toward the camera so it stays in FRONT of
     //    the body (not buried in the legs) and reads as a clear, whole ball.
