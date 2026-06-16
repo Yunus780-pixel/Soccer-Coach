@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Activity, Trophy, LayoutDashboard, History } from "lucide-react";
+import { Activity, Trophy, LayoutDashboard, History, Radar } from "lucide-react";
 import { startHeartbeat, setActivity } from "@/lib/presence";
+import { isMonitorUnlocked } from "@/lib/monitor-access";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -33,6 +34,8 @@ export default function Layout({ children }: LayoutProps) {
     { href: "/sessions", label: "Sessions", icon: History },
     { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
     { href: "/stats", label: "Stats", icon: LayoutDashboard },
+    // Private: only appears on devices that have unlocked it with the code.
+    ...(isMonitorUnlocked() ? [{ href: "/monitor", label: "Monitor", icon: Radar }] : []),
   ];
 
   return (

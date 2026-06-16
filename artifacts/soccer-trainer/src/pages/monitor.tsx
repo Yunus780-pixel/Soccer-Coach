@@ -12,7 +12,10 @@ import {
   YAxis,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Users, Circle } from "lucide-react";
+import { Activity, Users, Circle, Lock } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { isMonitorUnlocked, tryUnlockMonitor } from "@/lib/monitor-access";
 
 interface LiveUser {
   name: string;
@@ -36,12 +39,16 @@ function ago(seconds: number): string {
 }
 
 export default function Monitor() {
+  const [unlocked, setUnlocked] = useState(isMonitorUnlocked);
+  const [codeInput, setCodeInput] = useState("");
+  const [wrong, setWrong] = useState(false);
   const [live, setLive] = useState<LiveData>({ count: 0, users: [] });
   const [history, setHistory] = useState<DayRow[]>([]);
   const [updated, setUpdated] = useState<Date | null>(null);
   const [offline, setOffline] = useState(false);
 
   useEffect(() => {
+    if (!unlocked) return;
     let active = true;
     const pollLive = () =>
       fetch("/api/monitor/live")
@@ -68,7 +75,41 @@ export default function Monitor() {
       window.clearInterval(a);
       window.clearInterval(b);
     };
-  }, []);
+  }, [unlocked]);
+
+  // Private gate — only the owner (who knows the secret code) gets in.
+  if (!unlocked) {
+    const submit = () => {
+      if (tryUnlockMonitor(codeInput)) {
+        setUnlocked(true);
+      } else {
+        setWrong(true);
+      }
+    };
+    return (
+      <div className="max-w-md mx-auto px-4 py-20 text-center">
+        <Lock className="w-12 h-12 mx-auto text-primary mb-4" />
+        <h1 className="text-3xl font-bold uppercase tracking-tight mb-2">Private Monitor</h1>
+        <p className="text-muted-foreground mb-6">Enter the secret code to view who's using the app.</p>
+        <div className="flex gap-2">
+          <Input
+            type="password"
+            placeholder="Secret code"
+            value={codeInput}
+            autoFocus
+            onChange={(e) => {
+              setCodeInput(e.target.value);
+              setWrong(false);
+            }}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            data-testid="monitor-code"
+          />
+          <Button onClick={submit} className="uppercase font-bold">Unlock</Button>
+        </div>
+        {wrong && <p className="text-destructive text-sm mt-3 font-semibold">Wrong code — try again.</p>}
+      </div>
+    );
+  }
 
   const totalVisitors = history.reduce((s, d) => s + d.visitors, 0);
   const totalSessions = history.reduce((s, d) => s + d.sessions, 0);
