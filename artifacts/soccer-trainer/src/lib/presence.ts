@@ -2,6 +2,8 @@
 // what they're doing, so the /monitor dashboard can show who's online now and
 // usage over time. No login — each device gets a random anonymous id, plus the
 // athlete name they typed on the home page.
+import { isMonitorUnlocked } from "./monitor-access";
+
 const CLIENT_KEY = "panna-client-id";
 const NAME_KEY = "footwork_player_name"; // set by the home page name field
 
@@ -40,7 +42,8 @@ export function startHeartbeat(): () => void {
     fetch("/api/presence", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clientId: getClientId(), name, drill: currentActivity }),
+      // owner = this device unlocked the private Monitor, so don't count it.
+      body: JSON.stringify({ clientId: getClientId(), name, drill: currentActivity, owner: isMonitorUnlocked() }),
       keepalive: true,
     }).catch(() => {});
   };

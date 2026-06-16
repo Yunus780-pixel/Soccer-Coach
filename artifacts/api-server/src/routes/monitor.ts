@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, activityTable, sessionsTable } from "@workspace/db";
-import { count, sql } from "drizzle-orm";
+import { count, sql, eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -19,11 +19,26 @@ const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
 // Client heartbeat — called every ~15s while the app is open.
 router.post("/presence", async (req, res): Promise<void> => {
-  const { clientId, name, drill } = req.body ?? {};
+  const { clientId, name, drill, owner } = req.body ?? {};
   if (!clientId || typeof clientId !== "string") {
     res.status(400).json({ error: "clientId required" });
     return;
   }
+
+  // The owner (any device that has unlocked the private Monitor) is NEVER
+  // counted — the dashboard shows strangers only. Forget this device entirely
+  // and wipe its past visits so the owner's own testing doesn't show up.
+  if (owner === true) {
+    live.delete(clientId);
+    try {
+      await db.delete(activityTable).where(eq(activityTable.clientId, clientId));
+    } catch {
+      /* ignore */
+    }
+    res.json({ ok: true, owner: true });
+    return;
+  }
+
   const safeName = typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : "Anonymous";
   const safeDrill = typeof drill === "string" && drill.trim() ? drill.trim().slice(0, 60) : "Browsing";
 
