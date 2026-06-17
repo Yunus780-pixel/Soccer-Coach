@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle2, Activity, Play, StopCircle, RefreshCw, Trophy, Bot, Eye, EyeOff } from "lucide-react";
+import { CheckCircle2, Activity, Play, StopCircle, RefreshCw, Trophy, User, Eye, EyeOff } from "lucide-react";
 import { useGetDrill, useSubmitFeedback, useListSessions } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
@@ -323,9 +323,9 @@ export default function Train() {
             className="absolute top-16 right-4 z-30 w-[280px] max-w-[42vw] rounded-xl overflow-hidden shadow-2xl border-2 border-primary/70"
           >
             <div className="bg-primary text-white px-3 py-1.5 flex items-center gap-1.5">
-              <Bot className="w-4 h-4 shrink-0" />
+              <User className="w-4 h-4 shrink-0" />
               <span className="text-[11px] font-bold uppercase tracking-wider leading-none">
-                Watch the Robot
+                Watch the Coach
               </span>
             </div>
             <div className="bg-black aspect-[4/3]">
@@ -342,8 +342,8 @@ export default function Train() {
           className="absolute top-4 right-4 z-30 opacity-80 hover:opacity-100 uppercase text-xs font-bold gap-1.5"
           data-testid="btn-toggle-robot"
         >
-          {showRobot ? <EyeOff className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-          {showRobot ? "Hide Robot" : "Show Robot"}
+          {showRobot ? <EyeOff className="w-4 h-4" /> : <User className="w-4 h-4" />}
+          {showRobot ? "Hide Coach" : "Show Coach"}
         </Button>
 
         {/* Overlays — kept on the LEFT so the robot panel owns the right side */}
