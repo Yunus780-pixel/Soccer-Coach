@@ -6,7 +6,8 @@
 // trails that show the path of the acting foot and the ball.
 import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Grid, Line, OrbitControls, useGLTF } from "@react-three/drei";
+import { ContactShadows, Environment, Grid, Lightformer, Line, OrbitControls, useGLTF } from "@react-three/drei";
+import { EffectComposer, N8AO, Bloom, SMAA } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { BALL_R, GROUND_Y, THIGH, SHIN, clamp, type DrillMotion } from "./engine";
@@ -29,7 +30,7 @@ const LEG_SPAN = THIGH + SHIN; // 92 svg px of leg reach
 const TRAIL_LEN = 44;
 const TRAIL_SAMPLE_DT = 0.04;
 const HIP_LIFT = 0.035; // world units: lift the stance so it's not a deep squat
-const HEAD_PITCH = 0.24; // radians: tilt head/neck down to watch the ball
+const HEAD_PITCH = 0.18; // radians: tilt head/neck down to watch the ball
 const MAX_REACH = 0.985; // never fully lock the knee (avoids hyperextension look)
 const BALL_SCALE = 1.5; // bigger than life-size so the ball reads clearly
 const BALL_FRONT = 0.12; // nudge the ball toward the camera so it stays in front of the body
@@ -326,7 +327,7 @@ function HumanRig({
     // 2) Forward lean (over the ball) layered on the stabilised spine. Front
     //    drills have no lean in the choreography, so add an athletic base lean
     //    so the player leans over the ball instead of standing bolt upright.
-    const leanRad = ((pose.torsoLean + (side ? 0 : 13)) * Math.PI) / 180;
+    const leanRad = ((pose.torsoLean + (side ? 0 : 16)) * Math.PI) / 180;
     for (let i = 0; i < rig.spine.length; i++) {
       _qx.setFromAxisAngle(X_AXIS, leanRad * 0.5);
       rig.spine[i].quaternion.copy(rig.spineRest[i]).multiply(_qx);
@@ -354,16 +355,16 @@ function HumanRig({
     rig.armL.up.getWorldPosition(_shoulder);
     _handT
       .copy(_shoulder)
-      .addScaledVector(_down, armLen * 0.82)
-      .addScaledVector(_lateral, -armLen * 0.2)
-      .addScaledVector(forward, armLen * (-0.02 + swing));
+      .addScaledVector(_down, armLen * 0.68)
+      .addScaledVector(_lateral, -armLen * 0.22)
+      .addScaledVector(forward, armLen * (0.08 + swing));
     solveArm(rig.armL, _handT, rig.aL1, rig.aL2, _apole);
     rig.armR.up.getWorldPosition(_shoulder);
     _handT
       .copy(_shoulder)
-      .addScaledVector(_down, armLen * 0.82)
-      .addScaledVector(_lateral, armLen * 0.2)
-      .addScaledVector(forward, armLen * (-0.02 - swing));
+      .addScaledVector(_down, armLen * 0.68)
+      .addScaledVector(_lateral, armLen * 0.22)
+      .addScaledVector(forward, armLen * (0.08 - swing));
     solveArm(rig.armR, _handT, rig.aL1, rig.aL2, _apole);
 
     // 4) Ball — nudge horizontally toward the camera so it stays in FRONT of
@@ -478,15 +479,24 @@ function Trails({ trailRef }: { trailRef: React.MutableRefObject<{ foot: V3[]; b
 function Lighting() {
   return (
     <>
-      <hemisphereLight args={["#bcd9ff", "#0a140d", 0.55]} />
+      {/* Studio image-based lighting → realistic soft ambient + reflections on
+          skin/clothes. Built from emissive panels, so no external HDR file. */}
+      <Environment resolution={256} environmentIntensity={0.6}>
+        <Lightformer form="rect" intensity={4} position={[3, 5, 4]} scale={[9, 9, 1]} target={[0, 1, 0]} color="#fff6e6" />
+        <Lightformer form="rect" intensity={1.4} position={[-5, 2, 3]} scale={[7, 7, 1]} target={[0, 1, 0]} color="#bcd9ff" />
+        <Lightformer form="rect" intensity={2.2} position={[0, 3.5, -6]} scale={[12, 5, 1]} target={[0, 1, 0]} color="#9ec5ff" />
+        <Lightformer form="ring" intensity={1.6} position={[4, 1, -3]} scale={3} target={[0, 1, 0]} color="#ffffff" />
+        <Lightformer form="rect" intensity={0.5} position={[0, -3, 2]} scale={[14, 4, 1]} color="#0e2719" />
+      </Environment>
+      <hemisphereLight args={["#bcd9ff", "#0a140d", 0.25]} />
+      {/* Key light = crisp soft shadow + warm highlight */}
       <directionalLight
-        position={[3.5, 6, 3]} intensity={2.4} color="#fff6e6" castShadow
-        shadow-mapSize-width={2048} shadow-mapSize-height={2048} shadow-bias={-0.0004}
+        position={[3.5, 6, 3]} intensity={2.2} color="#fff6e6" castShadow
+        shadow-mapSize={[2048, 2048]} shadow-bias={-0.0003} shadow-normalBias={0.02} shadow-radius={5}
         shadow-camera-near={0.5} shadow-camera-far={20}
         shadow-camera-left={-4} shadow-camera-right={4} shadow-camera-top={5} shadow-camera-bottom={-1}
       />
-      <directionalLight position={[-5, 3, -3]} intensity={0.5} color="#86efac" />
-      <directionalLight position={[0, 2, -6]} intensity={0.7} color="#9ec5ff" />
+      <directionalLight position={[-5, 3, -3]} intensity={0.4} color="#86efac" />
     </>
   );
 }
@@ -517,6 +527,13 @@ function Scene({ motion, reduced, freezePhase, onKnee, still }: { motion: DrillM
         autoRotate={!reduced && !still} autoRotateSpeed={0.6}
         target={target} minPolarAngle={0.7} maxPolarAngle={1.62}
       />
+      {/* Post-processing: ambient occlusion (soft contact shadows in creases),
+          subtle bloom on highlights, and crisp anti-aliasing. */}
+      <EffectComposer multisampling={0} enableNormalPass={false}>
+        <N8AO aoRadius={0.35} intensity={2.2} distanceFalloff={1.2} halfRes color="#04140c" />
+        <Bloom intensity={0.45} luminanceThreshold={0.82} luminanceSmoothing={0.25} mipmapBlur />
+        <SMAA />
+      </EffectComposer>
     </>
   );
 }
