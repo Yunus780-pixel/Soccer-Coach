@@ -235,7 +235,24 @@ function HumanRig({
     model.rotation.y = side ? Math.PI / 2 : 0; // RPM faces +Z: face +X (side) / camera (front)
     model.traverse((o) => {
       const m = o as THREE.Mesh;
-      if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; }
+      if (!m.isMesh) return;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.frustumCulled = false;
+      // Dress the coach like a regular guy: maroon sweater, black jeans, red trainers.
+      const mat = m.material as THREE.MeshStandardMaterial | undefined;
+      if (mat && (mat as THREE.MeshStandardMaterial).color) {
+        if (m.name === "Wolf3D_Outfit_Top") {
+          mat.color.set("#6b2436"); // maroon/burgundy sweater
+          mat.roughness = 0.9; // wool/knit look
+          mat.metalness = 0;
+        } else if (m.name === "Wolf3D_Outfit_Bottom") {
+          mat.color.set("#16181d"); // black jeans
+          mat.roughness = 0.85;
+        } else if (m.name === "Wolf3D_Outfit_Footwear") {
+          mat.color.set("#8f2327"); // red sneakers
+        }
+      }
     });
 
     const bones: Record<string, THREE.Bone> = {};
