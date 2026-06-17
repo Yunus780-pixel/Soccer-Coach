@@ -7,7 +7,6 @@
 import { Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { ContactShadows, Environment, Grid, Lightformer, Line, OrbitControls, useGLTF } from "@react-three/drei";
-import { EffectComposer, N8AO, Bloom, SMAA } from "@react-three/postprocessing";
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { BALL_R, GROUND_Y, THIGH, SHIN, clamp, type DrillMotion } from "./engine";
@@ -527,13 +526,6 @@ function Scene({ motion, reduced, freezePhase, onKnee, still }: { motion: DrillM
         autoRotate={!reduced && !still} autoRotateSpeed={0.6}
         target={target} minPolarAngle={0.7} maxPolarAngle={1.62}
       />
-      {/* Post-processing: ambient occlusion (soft contact shadows in creases),
-          subtle bloom on highlights, and crisp anti-aliasing. */}
-      <EffectComposer multisampling={0} enableNormalPass={false}>
-        <N8AO aoRadius={0.35} intensity={2.2} distanceFalloff={1.2} halfRes color="#04140c" />
-        <Bloom intensity={0.45} luminanceThreshold={0.82} luminanceSmoothing={0.25} mipmapBlur />
-        <SMAA />
-      </EffectComposer>
     </>
   );
 }
