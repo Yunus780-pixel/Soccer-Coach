@@ -33,6 +33,8 @@ const HEAD_PITCH = 0.18; // radians: tilt head/neck down to watch the ball
 const MAX_REACH = 0.985; // never fully lock the knee (avoids hyperextension look)
 const BALL_SCALE = 1.5; // bigger than life-size so the ball reads clearly
 const BALL_FRONT = 0.34; // push the ball clearly in front of the body so it never intersects the legs
+const MOTION_SLOWNESS = 1.4; // >1 slows the drill down for smoother, cleaner, more deliberate motion
+const STANCE = 0.11; // world units each foot is pushed outward → a wider, split athletic stance
 
 useGLTF.preload(MODEL_URL);
 
@@ -325,7 +327,7 @@ function HumanRig({
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
     const frozen = freezePhase != null;
-    const phase = frozen ? freezePhase : reduced ? 0.3 : (t / motion.duration) % 1;
+    const phase = frozen ? freezePhase : reduced ? 0.3 : (t / (motion.duration * MOTION_SLOWNESS)) % 1;
     const pose = motion.pose(phase);
 
     mixer.update(frozen || reduced ? 0 : delta); // idle drives arms/head/breath
@@ -358,6 +360,10 @@ function HumanRig({
     const rz = side ? -rig.depth : ballZ;
     const footLT = toWorld(pose.footL.x, pose.footL.y, lz, _to.clone());
     const footRT = toWorld(pose.footR.x, pose.footR.y, rz, _knee.clone());
+    // Split the legs apart into a wider, more athletic stance.
+    _lateral.set(forward.z, 0, -forward.x);
+    footLT.addScaledVector(_lateral, -STANCE);
+    footRT.addScaledVector(_lateral, STANCE);
     solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
     solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
 
