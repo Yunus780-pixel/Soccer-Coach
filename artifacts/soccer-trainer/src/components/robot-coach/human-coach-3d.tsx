@@ -32,7 +32,7 @@ const HIP_LIFT = 0.035; // world units: lift the stance so it's not a deep squat
 const HEAD_PITCH = 0.18; // radians: tilt head/neck down to watch the ball
 const MAX_REACH = 0.985; // never fully lock the knee (avoids hyperextension look)
 const BALL_SCALE = 1.5; // bigger than life-size so the ball reads clearly
-const BALL_FRONT = 0.12; // nudge the ball toward the camera so it stays in front of the body
+const BALL_FRONT = 0.34; // push the ball clearly in front of the body so it never intersects the legs
 
 useGLTF.preload(MODEL_URL);
 
