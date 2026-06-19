@@ -298,6 +298,11 @@ function HumanRig({
     const aL2 = wp(bones.LeftForeArm).distanceTo(wp(bones.LeftHand));
     const S = (legLen * 0.96) / LEG_SPAN; // svg px → world units
     const depth = wp(bones.LeftUpLeg).distanceTo(wp(bones.RightUpLeg)) / 2 || 0.09;
+    // The model's true LEFT direction in world space (from the actual hip bones),
+    // so we can place each foot on its correct side and never cross the legs.
+    const leftDir = wp(bones.LeftUpLeg).sub(wp(bones.RightUpLeg));
+    leftDir.y = 0;
+    leftDir.normalize();
 
     const spine = [bones.Spine, bones.Spine1, bones.Spine2].filter(Boolean);
     const spineRest = spine.map((b) => b.quaternion.clone());
@@ -312,7 +317,7 @@ function HumanRig({
     if (idle) mixer.clipAction(idle).play();
 
     return {
-      bones, legL, legR, armL, armR, L1, L2, aL1, aL2, legLen, S, depth, spine, spineRest,
+      bones, legL, legR, armL, armR, L1, L2, aL1, aL2, legLen, S, depth, leftDir, spine, spineRest,
       hips: bones.Hips, hipsRest, neck: bones.Neck, head: bones.Head, neckRest, headRest,
       ballR: BALL_R * S * BALL_SCALE,
     };
@@ -355,15 +360,16 @@ function HumanRig({
     if (rig.head && rig.headRest) rig.head.quaternion.copy(rig.headRest).multiply(_qh.setFromAxisAngle(X_AXIS, HEAD_PITCH));
     rig.hips.updateMatrixWorld(true);
 
-    // 3) Legs via IK. footL/footR z: side → ±depth, front → small forward.
-    const lz = side ? rig.depth : ballZ;
-    const rz = side ? -rig.depth : ballZ;
-    const footLT = toWorld(pose.footL.x, pose.footL.y, lz, _to.clone());
-    const footRT = toWorld(pose.footR.x, pose.footR.y, rz, _knee.clone());
-    // Split the legs apart into a wider, more athletic stance.
-    _lateral.set(forward.z, 0, -forward.x);
-    footLT.addScaledVector(_lateral, -STANCE);
-    footRT.addScaledVector(_lateral, STANCE);
+    // 3) Legs via IK. The drill gives each foot its forward + height; the
+    //    sideways position is forced onto the foot's correct side (using the
+    //    real hip-bone left direction) and split wide — so legs never cross.
+    const footLT = toWorld(pose.footL.x, pose.footL.y, side ? 0 : ballZ, _to.clone());
+    const footRT = toWorld(pose.footR.x, pose.footR.y, side ? 0 : ballZ, _knee.clone());
+    const HALF_STANCE = rig.depth + STANCE;
+    const latL = _dl.copy(footLT).sub(pelvisW).dot(rig.leftDir);
+    footLT.addScaledVector(rig.leftDir, HALF_STANCE - latL); // left foot → left side
+    const latR = _dl.copy(footRT).sub(pelvisW).dot(rig.leftDir);
+    footRT.addScaledVector(rig.leftDir, -HALF_STANCE - latR); // right foot → right side
     solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
     solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
 
@@ -447,7 +453,8 @@ function HumanRig({
       kneeAcc.current = 0;
       // Approximate knee angle from the IK foot reach (matches the AI metric).
       const target = pose.watchLeg === "L" ? footLT : footRT;
-      rig.legL.up.getWorldPosition(_A);
+      const watchUp = pose.watchLeg === "L" ? rig.legL.up : rig.legR.up;
+      watchUp.getWorldPosition(_A);
       const reach = clamp(_A.distanceTo(target), 0, rig.legLen);
       const cos = clamp((rig.L1 * rig.L1 + rig.L2 * rig.L2 - reach * reach) / (2 * rig.L1 * rig.L2), -1, 1);
       const deg = Math.round((Math.acos(cos) * 180) / Math.PI);
