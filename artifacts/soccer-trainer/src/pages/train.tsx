@@ -13,7 +13,6 @@ import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import PoseCamera from "@/components/pose-camera";
 import CoachDemo from "@/components/robot-coach/coach-demo";
-import { setActivity } from "@/lib/presence";
 
 export default function Train() {
   const [match, params] = useRoute("/train/:drillId");
@@ -38,10 +37,6 @@ export default function Train() {
   const [feedbackResult, setFeedbackResult] = useState<any>(null);
   const [showRobot, setShowRobot] = useState(true);
 
-  // Report the current drill to the live monitor.
-  useEffect(() => {
-    if (drill?.name) setActivity(`Training: ${drill.name}`);
-  }, [drill?.name]);
   // Real end time of the drill — the countdown follows the actual clock, so
   // it stays correct even if the browser tab is hidden for a while.
   const endAtRef = useRef<number | null>(null);
@@ -447,7 +442,7 @@ export default function Train() {
         </AnimatePresence>
       </div>
 
-      {/* Bottom strip: spectators + drill info + actions */}
+      {/* Bottom strip: personal best + drill info + actions */}
       <div className="max-w-7xl mx-auto mt-3 flex flex-col gap-3">
 
         {/* Personal best row */}
