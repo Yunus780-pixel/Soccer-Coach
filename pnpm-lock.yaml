@@ -400,6 +400,9 @@ importers:
       '@tensorflow-models/coco-ssd':
         specifier: ^2.2.3
         version: 2.2.3(@tensorflow/tfjs-converter@4.22.0(@tensorflow/tfjs-core@4.22.0))(@tensorflow/tfjs-core@4.22.0)
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0

@@ -4,13 +4,14 @@
 // kinematics, with the model's idle clip kept for natural arm/torso life and a
 // procedural forward lean layered on. Keeps the 3D ball and fading motion
 // trails that show the path of the acting foot and the ball.
-import { Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { ContactShadows, Environment, Grid, Lightformer, Line, OrbitControls, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { BALL_R, GROUND_Y, THIGH, SHIN, clamp, type DrillMotion } from "./engine";
 import { getMotionForDrill } from "./motions";
+import { getDrillClip, loadClip } from "./mixamo";
 import type { V3 } from "./map3d";
 
 /** Which way the camera looks at the coach. Drives the Front/Side/Back tabs. */
@@ -198,6 +199,8 @@ function HumanRig({
   onKnee,
   trailRef,
   record = false,
+  clip = null,
+  clipFoot = "R",
 }: {
   motion: DrillMotion;
   reduced: boolean;
@@ -207,6 +210,10 @@ function HumanRig({
   /** Recording an offline loop: skip the idle clip so the motion is purely
    *  phase-driven and therefore loops perfectly (no breathing drift at the seam). */
   record?: boolean;
+  /** A Mixamo / mocap clip to play. When set, it drives the whole body and the
+   *  procedural IK is bypassed (the ball just follows the acting foot). */
+  clip?: THREE.AnimationClip | null;
+  clipFoot?: "L" | "R";
 }) {
   const { scene, animations } = useGLTF(MODEL_URL);
   const model = useMemo(() => skeletonClone(scene), [scene]);
@@ -340,7 +347,42 @@ function HumanRig({
 
   const ballZ = side ? -rig.depth : 0.06;
 
+  // When a Mixamo/mocap clip is supplied, play it and let it drive the body.
+  useEffect(() => {
+    if (!clip) return;
+    mixer.stopAllAction(); // silence the idle clip
+    const action = mixer.clipAction(clip);
+    action.reset();
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.play();
+    return () => {
+      action.stop();
+      mixer.uncacheAction(clip);
+    };
+  }, [clip, mixer]);
+
   useFrame((state, delta) => {
+    // ── Mixamo / mocap clip mode ──────────────────────────────────────────
+    // The clip animates the whole skeleton; we only keep the ball at the
+    // acting foot. Procedural IK below is skipped entirely.
+    if (clip) {
+      mixer.update(reduced || freezePhase != null ? 0 : delta);
+      if (ballRef.current) {
+        const footBone = clipFoot === "L" ? rig.legL.foot : rig.legR.foot;
+        footBone.getWorldPosition(_wpos);
+        const cam = state.camera.position;
+        let ox = cam.x - _wpos.x;
+        let oz = cam.z - _wpos.z;
+        const ol = Math.hypot(ox, oz) || 1;
+        ox = (ox / ol) * BALL_FRONT;
+        oz = (oz / ol) * BALL_FRONT;
+        ballRef.current.visible = true;
+        ballRef.current.position.set(_wpos.x + ox, Math.max(rig.ballR, _wpos.y + rig.ballR * 0.4), _wpos.z + oz);
+        ballRef.current.rotation.y += delta * 1.5;
+      }
+      return;
+    }
+
     const t = state.clock.elapsedTime;
     const frozen = freezePhase != null;
     // Offline frame-capture: the render tool steps window.__coachPhase from 0→1
@@ -565,7 +607,7 @@ function cameraForAngle(view: DrillMotion["view"], angle: ViewAngle) {
   return { position: [facing.x * DIST, 1.35, facing.z * DIST] as [number, number, number], fov: 37 };
 }
 
-function Scene({ motion, reduced, freezePhase, onKnee, still, record, fixedAngle }: { motion: DrillMotion; reduced: boolean; freezePhase: number | null; onKnee: (k: KneeInfo) => void; still: boolean; record: boolean; fixedAngle: boolean }) {
+function Scene({ motion, reduced, freezePhase, onKnee, still, record, fixedAngle, clip, clipFoot }: { motion: DrillMotion; reduced: boolean; freezePhase: number | null; onKnee: (k: KneeInfo) => void; still: boolean; record: boolean; fixedAngle: boolean; clip: THREE.AnimationClip | null; clipFoot: "L" | "R" }) {
   const trailRef = useRef<{ foot: V3[]; ball: V3[] }>({ foot: [], ball: [] });
   const target: [number, number, number] = [0, 0.85, 0];
   return (
@@ -574,11 +616,11 @@ function Scene({ motion, reduced, freezePhase, onKnee, still, record, fixedAngle
       <fog attach="fog" args={[BG, 6, 16]} />
       <Lighting />
       <Suspense fallback={null}>
-        <HumanRig motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} trailRef={trailRef} record={record} />
+        <HumanRig motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} trailRef={trailRef} record={record} clip={clip} clipFoot={clipFoot} />
       </Suspense>
-      {/* Trails are a live-coaching overlay; omit them while recording so each
-          captured frame depends only on phase and the loop is perfectly clean. */}
-      {!record && <Trails trailRef={trailRef} />}
+      {/* Trails are a live-coaching overlay; omit them while recording (clean
+          loop) and in clip mode (the clip already shows the motion). */}
+      {!record && !clip && <Trails trailRef={trailRef} />}
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <circleGeometry args={[9, 56]} />
         <meshStandardMaterial color="#123a26" roughness={1} metalness={0} />
@@ -617,6 +659,27 @@ export default function HumanCoach3D({ drillName, category, compact = false, cla
   const angle: ViewAngle | null = viewAngle ?? urlCam;
   const fixedAngle = angle != null;
   const still = useMemo(() => isStill() || freezePhase != null || record, [freezePhase, record]);
+
+  // Mixamo / mocap clip for this drill (if a clip file has been added). A
+  // ?clip=<file> URL param overrides it, for testing a clip on any drill.
+  const clipInfo = useMemo(() => getDrillClip(drillName), [drillName]);
+  const clipFile = useMemo(() => {
+    if (typeof window !== "undefined") {
+      const o = new URLSearchParams(window.location.search).get("clip");
+      if (o) return o;
+    }
+    return clipInfo?.file ?? null;
+  }, [clipInfo]);
+  const [clip, setClip] = useState<THREE.AnimationClip | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setClip(null);
+    if (!clipFile) return;
+    loadClip(`${import.meta.env.BASE_URL}animations/${clipFile}`).then((c) => {
+      if (!cancelled) setClip(c);
+    });
+    return () => { cancelled = true; };
+  }, [clipFile]);
   // Tell the offline render tool how long one full loop of this drill lasts, so
   // it can capture exactly the right number of frames at the right frame-rate.
   if (record && typeof window !== "undefined") {
@@ -641,10 +704,10 @@ export default function HumanCoach3D({ drillName, category, compact = false, cla
         gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05, preserveDrawingBuffer: record }}
         style={{ width: "100%", height: "100%", display: "block" }}
       >
-        <Scene motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} still={still} record={record} fixedAngle={fixedAngle} />
+        <Scene motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} still={still} record={record} fixedAngle={fixedAngle} clip={clip} clipFoot={clipInfo?.foot ?? "R"} />
       </Canvas>
     ),
-    [motion, reduced, freezePhase, onKnee, camera, still, record, fixedAngle],
+    [motion, reduced, freezePhase, onKnee, camera, still, record, fixedAngle, clip, clipInfo],
   );
 
   const ideal = motion.idealKnee;

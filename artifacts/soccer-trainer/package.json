@@ -83,6 +83,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
-    "@tensorflow-models/coco-ssd": "^2.2.3"
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "fflate": "^0.8.3"
   }
 }
