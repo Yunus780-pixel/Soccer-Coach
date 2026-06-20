@@ -363,13 +363,14 @@ function HumanRig({
     // 3) Legs via IK. The drill gives each foot its forward + height; the
     //    sideways position is forced onto the foot's correct side (using the
     //    real hip-bone left direction) and split wide — so legs never cross.
-    const footLT = toWorld(pose.footL.x, pose.footL.y, side ? 0 : ballZ, _to.clone());
-    const footRT = toWorld(pose.footR.x, pose.footR.y, side ? 0 : ballZ, _knee.clone());
-    const HALF_STANCE = rig.depth + STANCE;
-    const latL = _dl.copy(footLT).sub(pelvisW).dot(rig.leftDir);
-    footLT.addScaledVector(rig.leftDir, HALF_STANCE - latL); // left foot → left side
-    const latR = _dl.copy(footRT).sub(pelvisW).dot(rig.leftDir);
-    footRT.addScaledVector(rig.leftDir, -HALF_STANCE - latR); // right foot → right side
+    const lz = side ? rig.depth : ballZ;
+    const rz = side ? -rig.depth : ballZ;
+    const footLT = toWorld(pose.footL.x, pose.footL.y, lz, _to.clone());
+    const footRT = toWorld(pose.footR.x, pose.footR.y, rz, _knee.clone());
+    // Keep the full drill motion (kicks/taps), but ADD a split along the body's
+    // true left/right so the legs are wide and never cross.
+    footLT.addScaledVector(rig.leftDir, STANCE);
+    footRT.addScaledVector(rig.leftDir, -STANCE);
     solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
     solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
 
