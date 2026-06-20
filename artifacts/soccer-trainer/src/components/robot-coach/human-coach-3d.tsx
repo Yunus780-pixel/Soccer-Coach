@@ -13,11 +13,17 @@ import { BALL_R, GROUND_Y, THIGH, SHIN, clamp, type DrillMotion } from "./engine
 import { getMotionForDrill } from "./motions";
 import type { V3 } from "./map3d";
 
+/** Which way the camera looks at the coach. Drives the Front/Side/Back tabs. */
+export type ViewAngle = "front" | "side" | "back";
+
 interface HumanCoachProps {
   drillName?: string | null;
   category?: string | null;
   compact?: boolean;
   className?: string;
+  /** Lock the camera to a fixed angle (no auto-rotate). Used by the Front/Side/
+   *  Back video tabs and by the offline video recorder. */
+  viewAngle?: ViewAngle | null;
 }
 
 const GREEN_BRIGHT = "#4ade80";
@@ -191,12 +197,16 @@ function HumanRig({
   freezePhase,
   onKnee,
   trailRef,
+  record = false,
 }: {
   motion: DrillMotion;
   reduced: boolean;
   freezePhase: number | null;
   onKnee: (k: KneeInfo) => void;
   trailRef: React.MutableRefObject<{ foot: V3[]; ball: V3[] }>;
+  /** Recording an offline loop: skip the idle clip so the motion is purely
+   *  phase-driven and therefore loops perfectly (no breathing drift at the seam). */
+  record?: boolean;
 }) {
   const { scene, animations } = useGLTF(MODEL_URL);
   const model = useMemo(() => skeletonClone(scene), [scene]);
@@ -313,15 +323,16 @@ function HumanRig({
     const headRest = bones.Head?.quaternion.clone();
 
     // Start the idle clip for natural breathing / arm life on the upper body.
+    // Skipped while recording so the loop is seamless (purely phase-driven).
     const idle = animations.find((a) => /idle/i.test(a.name)) ?? animations[0];
-    if (idle) mixer.clipAction(idle).play();
+    if (idle && !record) mixer.clipAction(idle).play();
 
     return {
       bones, legL, legR, armL, armR, L1, L2, aL1, aL2, legLen, S, depth, leftDir, spine, spineRest,
       hips: bones.Hips, hipsRest, neck: bones.Neck, head: bones.Head, neckRest, headRest,
       ballR: BALL_R * S * BALL_SCALE,
     };
-  }, [model, animations, mixer, side]);
+  }, [model, animations, mixer, side, record]);
 
   // svg point → world. depthZ chooses the body-relative depth.
   const toWorld = (x: number, y: number, z: number, out: THREE.Vector3) =>
@@ -332,10 +343,19 @@ function HumanRig({
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
     const frozen = freezePhase != null;
-    const phase = frozen ? freezePhase : reduced ? 0.3 : (t / (motion.duration * MOTION_SLOWNESS)) % 1;
+    // Offline frame-capture: the render tool steps window.__coachPhase from 0→1
+    // and screenshots each frame, so we honour it here when present.
+    const override = record && typeof window !== "undefined"
+      ? (window as unknown as { __coachPhase?: number }).__coachPhase
+      : undefined;
+    const phase = typeof override === "number"
+      ? override
+      : frozen ? freezePhase
+      : reduced ? 0.3
+      : (t / (motion.duration * MOTION_SLOWNESS)) % 1;
     const pose = motion.pose(phase);
 
-    mixer.update(frozen || reduced ? 0 : delta); // idle drives arms/head/breath
+    mixer.update(frozen || reduced || record ? 0 : delta); // idle drives arms/head/breath
 
     // 1) Pelvis: place the Hips bone at the choreography pelvis (world), lifted
     //    a touch so the athlete stands tall rather than in a deep squat. Re-assert
@@ -531,7 +551,21 @@ function Lighting() {
   );
 }
 
-function Scene({ motion, reduced, freezePhase, onKnee, still }: { motion: DrillMotion; reduced: boolean; freezePhase: number | null; onKnee: (k: KneeInfo) => void; still: boolean }) {
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/** Camera placement for a fixed Front / Side / Back view of the coach.
+ *  Angles are relative to the body's facing direction (which depends on whether
+ *  the drill is choreographed front-on or side-on), so "front" always looks at
+ *  the chest, "side" is a clean profile, and "back" is from behind. */
+function cameraForAngle(view: DrillMotion["view"], angle: ViewAngle) {
+  const facing = view === "side" ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
+  const yaw = angle === "front" ? 0 : angle === "back" ? Math.PI : Math.PI / 2;
+  facing.applyAxisAngle(Y_AXIS, yaw);
+  const DIST = 4.3;
+  return { position: [facing.x * DIST, 1.35, facing.z * DIST] as [number, number, number], fov: 37 };
+}
+
+function Scene({ motion, reduced, freezePhase, onKnee, still, record, fixedAngle }: { motion: DrillMotion; reduced: boolean; freezePhase: number | null; onKnee: (k: KneeInfo) => void; still: boolean; record: boolean; fixedAngle: boolean }) {
   const trailRef = useRef<{ foot: V3[]; ball: V3[] }>({ foot: [], ball: [] });
   const target: [number, number, number] = [0, 0.85, 0];
   return (
@@ -540,9 +574,11 @@ function Scene({ motion, reduced, freezePhase, onKnee, still }: { motion: DrillM
       <fog attach="fog" args={[BG, 6, 16]} />
       <Lighting />
       <Suspense fallback={null}>
-        <HumanRig motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} trailRef={trailRef} />
+        <HumanRig motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} trailRef={trailRef} record={record} />
       </Suspense>
-      <Trails trailRef={trailRef} />
+      {/* Trails are a live-coaching overlay; omit them while recording so each
+          captured frame depends only on phase and the loop is perfectly clean. */}
+      {!record && <Trails trailRef={trailRef} />}
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <circleGeometry args={[9, 56]} />
         <meshStandardMaterial color="#123a26" roughness={1} metalness={0} />
@@ -554,14 +590,14 @@ function Scene({ motion, reduced, freezePhase, onKnee, still }: { motion: DrillM
       <ContactShadows position={[0, 0.012, 0]} opacity={0.5} scale={7} blur={2.4} far={3} color="#000000" />
       <OrbitControls
         enablePan={false} enableZoom={false} enableDamping
-        autoRotate={!reduced && !still} autoRotateSpeed={0.6}
+        autoRotate={!reduced && !still && !fixedAngle} autoRotateSpeed={0.6}
         target={target} minPolarAngle={0.7} maxPolarAngle={1.62}
       />
     </>
   );
 }
 
-export default function HumanCoach3D({ drillName, category, compact = false, className }: HumanCoachProps) {
+export default function HumanCoach3D({ drillName, category, compact = false, className, viewAngle = null }: HumanCoachProps) {
   const motion = getMotionForDrill(drillName, category);
   const reduced = useMemo(prefersReducedMotion, []);
   const freezePhase = useMemo(() => {
@@ -569,31 +605,46 @@ export default function HumanCoach3D({ drillName, category, compact = false, cla
     const p = new URLSearchParams(window.location.search).get("phase");
     return p != null && p !== "" ? parseFloat(p) : null;
   }, []);
-  const still = useMemo(() => isStill() || freezePhase != null, [freezePhase]);
+  // Offline recorder hook + camera-angle override can also come from the URL,
+  // so the headless render script can drive everything via query params.
+  const { urlCam, record } = useMemo(() => {
+    if (typeof window === "undefined") return { urlCam: null as ViewAngle | null, record: false };
+    const p = new URLSearchParams(window.location.search);
+    const c = p.get("cam");
+    const cam: ViewAngle | null = c === "front" || c === "side" || c === "back" ? (c as ViewAngle) : null;
+    return { urlCam: cam, record: p.get("record") === "1" };
+  }, []);
+  const angle: ViewAngle | null = viewAngle ?? urlCam;
+  const fixedAngle = angle != null;
+  const still = useMemo(() => isStill() || freezePhase != null || record, [freezePhase, record]);
+  // Tell the offline render tool how long one full loop of this drill lasts, so
+  // it can capture exactly the right number of frames at the right frame-rate.
+  if (record && typeof window !== "undefined") {
+    (window as unknown as { __coachPeriod?: number }).__coachPeriod = motion.duration * MOTION_SLOWNESS;
+  }
   const [knee, setKnee] = useState<KneeInfo | null>(null);
   const onKnee = useCallback((k: KneeInfo) => {
     setKnee((prev) => (prev && prev.deg === k.deg && prev.ok === k.ok ? prev : k));
   }, []);
 
-  const camera = useMemo(
-    () =>
-      motion.view === "side"
-        ? { position: [3.0, 1.35, 3.4] as [number, number, number], fov: 38 }
-        : { position: [0, 1.3, 4.2] as [number, number, number], fov: 36 },
-    [motion.view],
-  );
+  const camera = useMemo(() => {
+    if (angle) return cameraForAngle(motion.view, angle);
+    return motion.view === "side"
+      ? { position: [3.0, 1.35, 3.4] as [number, number, number], fov: 38 }
+      : { position: [0, 1.3, 4.2] as [number, number, number], fov: 36 };
+  }, [motion.view, angle]);
 
   const scene = useMemo(
     () => (
       <Canvas
-        shadows camera={camera} dpr={[1, 2]}
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+        shadows camera={camera} dpr={record ? 1 : [1, 2]}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05, preserveDrawingBuffer: record }}
         style={{ width: "100%", height: "100%", display: "block" }}
       >
-        <Scene motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} still={still} />
+        <Scene motion={motion} reduced={reduced} freezePhase={freezePhase} onKnee={onKnee} still={still} record={record} fixedAngle={fixedAngle} />
       </Canvas>
     ),
-    [motion, reduced, freezePhase, onKnee, camera, still],
+    [motion, reduced, freezePhase, onKnee, camera, still, record, fixedAngle],
   );
 
   const ideal = motion.idealKnee;

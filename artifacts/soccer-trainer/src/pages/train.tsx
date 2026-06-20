@@ -12,7 +12,7 @@ import { useGetDrill, useSubmitFeedback, useListSessions } from "@workspace/api-
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import PoseCamera from "@/components/pose-camera";
-import RobotCoach from "@/components/robot-coach/robot-coach";
+import CoachDemo from "@/components/robot-coach/coach-demo";
 import { setActivity } from "@/lib/presence";
 
 export default function Train() {
@@ -329,7 +329,7 @@ export default function Train() {
               </span>
             </div>
             <div className="bg-black aspect-[4/3]">
-              <RobotCoach drillName={drill?.name} category={drill?.category} />
+              <CoachDemo drillName={drill?.name} category={drill?.category} />
             </div>
           </motion.div>
         )}
