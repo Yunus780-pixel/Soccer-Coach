@@ -55,6 +55,22 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
   const footPrevSpeed = useRef(0);
   const footRising = useRef(false);
 
+  // Read live props inside the rAF loop without restarting it.
+  const isActiveRef = useRef(isActive);
+  const drillCategoryRef = useRef(drillCategory);
+  drillCategoryRef.current = drillCategory;
+  // Reset rep trackers when a drill starts, so there's no false first rep.
+  useEffect(() => {
+    isActiveRef.current = isActive;
+    if (isActive) {
+      lastBallSample.current = null;
+      prevBallVy.current = null;
+      lastFootPos.current = null;
+      footPrevSpeed.current = 0;
+      footRising.current = false;
+    }
+  }, [isActive]);
+
   // Camera setup — runs immediately, never blocks on AI
   useEffect(() => {
     async function setupCamera() {
@@ -131,20 +147,21 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
     };
   }, []);
 
-  // Detection loop
+  // Live detection loop — starts as soon as the camera + a model are ready, so
+  // you ALWAYS see yourself and your movement tracked in real time (the live
+  // skeleton + ball ring). Rep counting and scoring only run while the drill is
+  // actually going (isActiveRef), so nothing is counted before you press Start.
   useEffect(() => {
-    if (!isActive || !videoRef.current || !canvasRef.current) {
-      if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-      return;
-    }
-
+    if (!videoRef.current || !canvasRef.current) return;
+    if (!poseDetector && !ballDetector) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d")!;
+    let raf = 0;
 
     async function detect() {
       if (video.readyState < 2) {
-        animationFrameId.current = requestAnimationFrame(detect);
+        raf = requestAnimationFrame(detect);
         return;
       }
       if (canvas.width !== video.videoWidth) {
@@ -152,20 +169,24 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
         canvas.height = video.videoHeight;
       }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const active = isActiveRef.current;
 
-      // Pose estimation
+      // Pose: always draw the skeleton (live "this is you"); only measure form
+      // and count reps while the drill is running.
       if (poseDetector) {
         try {
           const poses = await poseDetector.estimatePoses(video);
           if (poses.length > 0) {
-            extractMetrics(poses[0]);
-            detectFootReps(poses[0]);
             drawSkeleton(ctx, poses[0]);
+            if (active) {
+              extractMetrics(poses[0]);
+              detectFootReps(poses[0]);
+            }
           }
         } catch (_) {}
       }
 
-      // Ball detection
+      // Ball: always show the live tracking ring; only count reps while running.
       if (ballDetector) {
         try {
           const objects = await ballDetector.detect(video);
@@ -189,40 +210,42 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
             ctx.fillStyle = "#16a34a";
             ctx.fill();
 
-            // Rep counting from real ball velocity (pixels per second)
-            const now = Date.now();
-            const prev = lastBallSample.current;
-            if (prev && now > prev.t) {
-              const dt = (now - prev.t) / 1000;
-              const vx = (cx - prev.x) / dt;
-              const vy = (cy - prev.y) / dt;
-              const speed = Math.hypot(vx, vy);
+            if (active) {
+              // Rep counting from real ball velocity (pixels per second)
+              const now = Date.now();
+              const prev = lastBallSample.current;
+              if (prev && now > prev.t) {
+                const dt = (now - prev.t) / 1000;
+                const vx = (cx - prev.x) / dt;
+                const vy = (cy - prev.y) / dt;
+                const speed = Math.hypot(vx, vy);
 
-              const isJuggling = drillCategory === "juggling";
-              let isRep: boolean;
-              if (isJuggling) {
-                // A juggle = ball was falling (vy > 0) and is now kicked up
-                // (vy clearly negative). Catches each touch, not just big kicks.
-                isRep = prevBallVy.current !== null && prevBallVy.current > 50 && vy < -150;
-              } else {
-                // A kick/pass = sudden burst of ball speed
-                isRep = speed > 900;
-              }
+                const isJuggling = drillCategoryRef.current === "juggling";
+                let isRep: boolean;
+                if (isJuggling) {
+                  // A juggle = ball was falling (vy > 0) and is now kicked up
+                  // (vy clearly negative). Catches each touch, not just big kicks.
+                  isRep = prevBallVy.current !== null && prevBallVy.current > 50 && vy < -150;
+                } else {
+                  // A kick/pass = sudden burst of ball speed
+                  isRep = speed > 900;
+                }
 
-              const cooldownMs = isJuggling ? 450 : 1000;
-              if (isRep && now - lastRepTime.current > cooldownMs) {
-                lastRepTime.current = now;
-                onRepDetectedRef.current?.();
-                // Flash ring on rep
-                ctx.beginPath();
-                ctx.arc(cx, cy, r + 20, 0, 2 * Math.PI);
-                ctx.strokeStyle = "rgba(22, 163, 74, 0.8)";
-                ctx.lineWidth = 5;
-                ctx.stroke();
+                const cooldownMs = isJuggling ? 450 : 1000;
+                if (isRep && now - lastRepTime.current > cooldownMs) {
+                  lastRepTime.current = now;
+                  onRepDetectedRef.current?.();
+                  // Flash ring on rep
+                  ctx.beginPath();
+                  ctx.arc(cx, cy, r + 20, 0, 2 * Math.PI);
+                  ctx.strokeStyle = "rgba(22, 163, 74, 0.8)";
+                  ctx.lineWidth = 5;
+                  ctx.stroke();
+                }
+                prevBallVy.current = vy;
               }
-              prevBallVy.current = vy;
+              lastBallSample.current = { x: cx, y: cy, t: now };
             }
-            lastBallSample.current = { x: cx, y: cy, t: now };
           } else {
             lastBallSample.current = null;
             prevBallVy.current = null;
@@ -230,14 +253,15 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
         } catch (_) {}
       }
 
-      animationFrameId.current = requestAnimationFrame(detect);
+      raf = requestAnimationFrame(detect);
     }
 
-    animationFrameId.current = requestAnimationFrame(detect);
+    raf = requestAnimationFrame(detect);
+    animationFrameId.current = raf;
     return () => {
-      if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+      if (raf) cancelAnimationFrame(raf);
     };
-  }, [isActive, poseDetector, ballDetector, drillCategory]);
+  }, [poseDetector, ballDetector]);
 
   // Draw the detected body as a skeleton: glowing green legs (what we score),
   // softer white upper body.
@@ -447,6 +471,14 @@ export default function PoseCamera({ isActive, onPoseUpdate, onRepDetected, dril
         ref={canvasRef}
         className="absolute w-full h-full object-cover transform -scale-x-100 z-10"
       />
+
+      {/* Clear "this is your live camera" badge */}
+      {cameraReady && (
+        <div className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm text-white text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full pointer-events-none">
+          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+          Live · You
+        </div>
+      )}
     </div>
   );
 }
