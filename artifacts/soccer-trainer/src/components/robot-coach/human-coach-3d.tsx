@@ -29,7 +29,10 @@ interface HumanCoachProps {
 
 const GREEN_BRIGHT = "#4ade80";
 const BG = "#0b1220";
-const MODEL_URL = `${import.meta.env.BASE_URL}models/human.glb`;
+// A plain, featureless human mannequin (Mixamo "X Bot": all body parts, no face,
+// no clothes, no detail) — exactly the blank human we want. Shares Mixamo bone
+// names so the IK and the Mixamo animation clips both drive it directly.
+const MODEL_URL = `${import.meta.env.BASE_URL}models/mannequin.glb`;
 const TARGET_HEIGHT = 1.75; // world units (≈ metres) the model is scaled to
 const CENTER_X = 200; // svg stage centre
 const LEG_SPAN = THIGH + SHIN; // 92 svg px of leg reach
