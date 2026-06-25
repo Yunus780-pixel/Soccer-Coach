@@ -20,7 +20,8 @@ const browser = await puppeteer.launch({
   defaultViewport: { width: 700, height: 700, deviceScaleFactor: 1 },
 });
 const page = await browser.newPage();
-const url = `${BASE}/__preview?drill=${encodeURIComponent(drill)}&cam=${cam}&phase=${phase}&still=1`;
+const stanceQ = process.env.STANCE ? `&stance=${process.env.STANCE}` : "";
+const url = `${BASE}/__preview?drill=${encodeURIComponent(drill)}&cam=${cam}&phase=${phase}&still=1${stanceQ}`;
 await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
 
 // wait until the model is drawn (frame no longer near-black)

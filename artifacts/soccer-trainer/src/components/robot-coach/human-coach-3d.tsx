@@ -44,7 +44,7 @@ const MAX_REACH = 0.985; // never fully lock the knee (avoids hyperextension loo
 const BALL_SCALE = 1.5; // bigger than life-size so the ball reads clearly
 const BALL_FRONT = 0.34; // push the ball clearly in front of the body so it never intersects the legs
 const MOTION_SLOWNESS = 1.4; // >1 slows the drill down for smoother, cleaner, more deliberate motion
-const STANCE = 0.11; // world units each foot is pushed outward → a wider, split athletic stance
+const STANCE = 0.24; // world units each foot is pushed outward → legs a real, human hip-width apart (tunable via ?stance=)
 
 useGLTF.preload(MODEL_URL);
 
@@ -60,6 +60,15 @@ function isStill(): boolean {
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("still") === "1"
   );
+}
+
+/** Dev-only numeric URL override (e.g. ?stance=0.2), used to tune values like the
+ *  leg stance from the render tool without recompiling. Falls back to `def`. */
+function urlNum(key: string, def: number): number {
+  if (typeof window === "undefined") return def;
+  const v = new URLSearchParams(window.location.search).get(key);
+  const n = v != null && v !== "" ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : def;
 }
 
 /** A football skin: white field with a rough scatter of black pentagons. */
@@ -242,6 +251,8 @@ function HumanRig({
 
   // World forward / knee-pole directions for this drill's view.
   const forward = useMemo(() => (side ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1)), [side]);
+  // How far each foot is pushed out to the side (tunable via ?stance= for fitting).
+  const stance = useMemo(() => urlNum("stance", STANCE), []);
 
   // One-time rig setup: scale, orient, capture bones + rest IK data.
   const rig = useMemo(() => {
@@ -434,8 +445,8 @@ function HumanRig({
     const footRT = toWorld(pose.footR.x, pose.footR.y, rz, _knee.clone());
     // Keep the full drill motion (kicks/taps), but ADD a split along the body's
     // true left/right so the legs are wide and never cross.
-    footLT.addScaledVector(rig.leftDir, STANCE);
-    footRT.addScaledVector(rig.leftDir, -STANCE);
+    footLT.addScaledVector(rig.leftDir, stance);
+    footRT.addScaledVector(rig.leftDir, -stance);
     solveLeg(rig.legL, footLT, rig.L1, rig.L2, forward, forward);
     solveLeg(rig.legR, footRT, rig.L1, rig.L2, forward, forward);
 
